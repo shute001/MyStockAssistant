@@ -14,14 +14,19 @@ class TextImportRequest(BaseModel):
 
 class ConfirmImportItem(BaseModel):
     symbol: str
-    name: str
-    cost_price: float = 0.0
-    current_volume: int = 0
-    target_type: str = "POSITION"
-    category: Optional[str] = "同花顺板块"
+    name: Optional[str] = None
+    cost_price: Optional[float] = 0.0
+    current_volume: Optional[int] = 0
+    profit_loss: Optional[float] = 0.0
+    current_price: Optional[float] = 0.0
+    target_type: Optional[str] = None
+    category: Optional[str] = None
 
 class ConfirmImportPayload(BaseModel):
     items: List[ConfirmImportItem]
+    target_type: Optional[str] = "POSITION"
+    is_full_sync: Optional[bool] = True
+
 
 @router.post("/parse-text")
 def parse_text(payload: TextImportRequest):
@@ -47,6 +52,7 @@ def confirm_import(payload: ConfirmImportPayload, db: Session = Depends(get_db))
     """Batch write parsed import items into SQLite database"""
     imported_count = 0
     imported_symbols = set()
+    global_target_type = payload.target_type or "POSITION"
 
     for item in payload.items:
         symbol = MarketDataService.format_symbol(item.symbol)
@@ -63,21 +69,24 @@ def confirm_import(payload: ConfirmImportPayload, db: Session = Depends(get_db))
             db.commit()
 
         category = item.category if item.category else "同花顺板块"
-        target_type = item.target_type or payload.target_type
+        target_type = item.target_type or global_target_type
+
+        cost_price = item.cost_price or 0.0
+        current_volume = item.current_volume or 0
 
         # Check if importing cleared position file or category contains "清仓"
-        is_cleared = (target_type == "CLEARED") or ("清仓" in category) or ("历史持仓" in category) or (item.current_volume <= 0 and target_type == "POSITION")
+        is_cleared = (target_type == "CLEARED") or ("清仓" in category) or ("历史持仓" in category) or (current_volume <= 0 and target_type == "POSITION")
 
         if is_cleared:
             pos = db.query(Position).filter(Position.symbol == symbol).first()
             if pos:
                 pos.current_volume = 0
                 pos.strategy_tag = "历史清仓"
-                pos.cost_price = item.cost_price if item.cost_price > 0 else pos.cost_price
+                pos.cost_price = cost_price if cost_price > 0 else pos.cost_price
             else:
                 pos = Position(
                     symbol=symbol,
-                    cost_price=item.cost_price,
+                    cost_price=cost_price,
                     current_volume=0,
                     strategy_tag="历史清仓"
                 )
@@ -93,14 +102,14 @@ def confirm_import(payload: ConfirmImportPayload, db: Session = Depends(get_db))
         elif target_type == "POSITION":
             pos = db.query(Position).filter(Position.symbol == symbol).first()
             if pos:
-                pos.cost_price = item.cost_price if item.cost_price > 0 else pos.cost_price
-                pos.current_volume = item.current_volume if item.current_volume > 0 else pos.current_volume
+                pos.cost_price = cost_price if cost_price > 0 else pos.cost_price
+                pos.current_volume = current_volume if current_volume > 0 else pos.current_volume
                 pos.strategy_tag = "当前持仓"
             else:
                 pos = Position(
                     symbol=symbol,
-                    cost_price=item.cost_price,
-                    current_volume=item.current_volume if item.current_volume > 0 else 100,
+                    cost_price=cost_price,
+                    current_volume=current_volume if current_volume > 0 else 100,
                     strategy_tag="当前持仓"
                 )
                 db.add(pos)
@@ -116,7 +125,7 @@ def confirm_import(payload: ConfirmImportPayload, db: Session = Depends(get_db))
 
     # Auto Cleared Position Detection for Missing Stocks (e.g. 阳光电源)
     # If importing active positions, any existing active position in DB missing from imported_symbols has been sold out / cleared!
-    if (payload.target_type == "POSITION" or any(i.target_type == "POSITION" for i in payload.items)) and imported_symbols:
+    if global_target_type == "POSITION" and imported_symbols:
         active_positions = db.query(Position).filter(Position.current_volume > 0).all()
         for pos in active_positions:
             if pos.symbol not in imported_symbols:
@@ -126,3 +135,4 @@ def confirm_import(payload: ConfirmImportPayload, db: Session = Depends(get_db))
 
     db.commit()
     return {"status": "success", "imported_count": imported_count}
+
