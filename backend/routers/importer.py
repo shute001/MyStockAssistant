@@ -46,8 +46,11 @@ async def upload_file(file: UploadFile = File(...)):
 def confirm_import(payload: ConfirmImportPayload, db: Session = Depends(get_db)):
     """Batch write parsed import items into SQLite database"""
     imported_count = 0
+    imported_symbols = set()
+
     for item in payload.items:
         symbol = MarketDataService.format_symbol(item.symbol)
+        imported_symbols.add(symbol)
         stock_name = item.name if (item.name and not item.name.startswith("股票")) else MarketDataService.get_stock_name(symbol)
         
         stock = db.query(Stock).filter(Stock.symbol == symbol).first()
@@ -60,20 +63,45 @@ def confirm_import(payload: ConfirmImportPayload, db: Session = Depends(get_db))
             db.commit()
 
         category = item.category if item.category else "同花顺板块"
+        target_type = item.target_type or payload.target_type
 
-        if item.target_type == "POSITION":
+        # Check if importing cleared position file or category contains "清仓"
+        is_cleared = (target_type == "CLEARED") or ("清仓" in category) or ("历史持仓" in category) or (item.current_volume <= 0 and target_type == "POSITION")
+
+        if is_cleared:
             pos = db.query(Position).filter(Position.symbol == symbol).first()
-            tag = "当前持仓" if item.current_volume > 0 else "历史清仓"
             if pos:
+                pos.current_volume = 0
+                pos.strategy_tag = "历史清仓"
                 pos.cost_price = item.cost_price if item.cost_price > 0 else pos.cost_price
-                pos.current_volume = item.current_volume
-                pos.strategy_tag = tag
             else:
                 pos = Position(
                     symbol=symbol,
                     cost_price=item.cost_price,
-                    current_volume=item.current_volume,
-                    strategy_tag=tag
+                    current_volume=0,
+                    strategy_tag="历史清仓"
+                )
+                db.add(pos)
+            
+            # Also record in Watchlist under category "历史清仓"
+            w = db.query(Watchlist).filter(Watchlist.symbol == symbol).first()
+            if not w:
+                w = Watchlist(symbol=symbol, category="历史清仓")
+                db.add(w)
+            else:
+                w.category = "历史清仓"
+        elif target_type == "POSITION":
+            pos = db.query(Position).filter(Position.symbol == symbol).first()
+            if pos:
+                pos.cost_price = item.cost_price if item.cost_price > 0 else pos.cost_price
+                pos.current_volume = item.current_volume if item.current_volume > 0 else pos.current_volume
+                pos.strategy_tag = "当前持仓"
+            else:
+                pos = Position(
+                    symbol=symbol,
+                    cost_price=item.cost_price,
+                    current_volume=item.current_volume if item.current_volume > 0 else 100,
+                    strategy_tag="当前持仓"
                 )
                 db.add(pos)
         else:
@@ -84,9 +112,17 @@ def confirm_import(payload: ConfirmImportPayload, db: Session = Depends(get_db))
             elif category and category != "同花顺板块":
                 w.category = category
 
-
-
         imported_count += 1
+
+    # Auto Cleared Position Detection for Missing Stocks (e.g. 阳光电源)
+    # If importing active positions, any existing active position in DB missing from imported_symbols has been sold out / cleared!
+    if (payload.target_type == "POSITION" or any(i.target_type == "POSITION" for i in payload.items)) and imported_symbols:
+        active_positions = db.query(Position).filter(Position.current_volume > 0).all()
+        for pos in active_positions:
+            if pos.symbol not in imported_symbols:
+                # Mark missing stock as cleared position
+                pos.current_volume = 0
+                pos.strategy_tag = "历史清仓"
 
     db.commit()
     return {"status": "success", "imported_count": imported_count}

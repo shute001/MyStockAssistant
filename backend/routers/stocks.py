@@ -30,15 +30,76 @@ def get_positions(
     db: Session = Depends(get_db)
 ):
     """Fetch all holding positions with real-time indicators in ultra-fast batch mode"""
+    if status == "CLEARED":
+        pos_cleared = db.query(Position).filter(
+            (Position.current_volume <= 0) | (Position.strategy_tag == "历史清仓")
+        ).all()
+
+        watch_cleared = db.query(Watchlist).filter(
+            Watchlist.category.like("%清仓%") | Watchlist.category.like("%历史持仓%")
+        ).all()
+
+        symbols_map = {}
+        for p in pos_cleared:
+            symbols_map[p.symbol] = {
+                "id": p.id,
+                "symbol": p.symbol,
+                "cost_price": p.cost_price,
+                "strategy_tag": "历史清仓"
+            }
+        for w in watch_cleared:
+            if w.symbol not in symbols_map:
+                symbols_map[w.symbol] = {
+                    "id": w.id,
+                    "symbol": w.symbol,
+                    "cost_price": w.target_buy_price or 0.0,
+                    "strategy_tag": "历史清仓"
+                }
+
+        if not symbols_map:
+            return []
+
+        symbols = list(symbols_map.keys())
+        batch_quotes = MarketDataService.get_batch_realtime_quotes(symbols)
+        result = []
+        for sym, data in symbols_map.items():
+            stock = db.query(Stock).filter(Stock.symbol == sym).first()
+            quote = batch_quotes.get(sym, {})
+            real_name = quote.get("name") or (stock.name if stock and not stock.name.startswith("股票") else MarketDataService.get_stock_name(sym))
+            cp = quote.get("current_price") or data["cost_price"]
+
+            result.append({
+                "id": data["id"],
+                "symbol": sym,
+                "name": real_name,
+                "current_volume": 0,
+                "available_volume": 0,
+                "cost_price": round(data["cost_price"], 3),
+                "current_price": round(cp, 3),
+                "profit_loss": 0.0,
+                "profit_ratio": 0.0,
+                "today_profit_loss": 0.0,
+                "today_profit_loss_ratio": quote.get("pct_chg_num", 0.0),
+                "market_value": 0.0,
+                "position_weight": 0.0,
+                "market_name": "上海A股" if sym.startswith(("6", "5", "688")) else "深圳A股",
+                "strategy_tag": "历史清仓",
+                "total_cost": 0.0,
+                "current_value": 0.0,
+                "pct_chg": quote.get("pct_chg", "0.00%"),
+                "ma_trend": "已清仓归档",
+                "macd_status": "观察"
+            })
+        return result
+
     query = db.query(Position)
     if status == "ACTIVE" and not include_zero:
         query = query.filter(Position.current_volume > 0)
-    elif status == "CLEARED":
-        query = query.filter(Position.current_volume <= 0)
 
     positions = query.all()
     if not positions:
         return []
+
 
 
     symbols = [pos.symbol for pos in positions]

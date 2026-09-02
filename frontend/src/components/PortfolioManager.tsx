@@ -368,6 +368,8 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
   const [selectedFileName, setSelectedFileName] = useState<string>('');
   const [parseAttempted, setParseAttempted] = useState<boolean>(false);
+  const [importTargetType, setImportTargetType] = useState<'POSITION' | 'CLEARED' | 'WATCHLIST'>('POSITION');
+
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -375,6 +377,20 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     setSelectedFileName(file.name);
     setIsParsing(true);
     setParseAttempted(true);
+
+    if (file.name.includes('清仓') || file.name.includes('历史持仓')) {
+      setImportTargetType('CLEARED');
+      setImportCategory('历史清仓');
+    } else if (activeTab === 'position') {
+      setImportTargetType('POSITION');
+      setImportCategory('当前持仓');
+    } else if (activeTab === 'cleared') {
+      setImportTargetType('CLEARED');
+      setImportCategory('历史清仓');
+    } else {
+      setImportTargetType('WATCHLIST');
+    }
+
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -385,6 +401,9 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
       setParsedPreview(items);
       if (res.data.default_category) {
         setImportCategory(res.data.default_category);
+        if (res.data.default_category.includes('清仓') || res.data.default_category.includes('历史持仓')) {
+          setImportTargetType('CLEARED');
+        }
       }
     } catch (err) {
       alert('解析同花顺导出文件失败，请检查文件格式');
@@ -393,28 +412,30 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     }
   };
 
-
   const handleConfirmImport = async () => {
     if (parsedPreview.length === 0) return;
     setIsSubmitting(true);
     try {
       await axios.post('/api/v1/import/confirm', {
+        target_type: importTargetType,
         items: parsedPreview.map((item) => ({
           ...item,
-          target_type: activeTab === 'position' ? 'POSITION' : 'WATCHLIST',
-          category: importCategory || '同花顺板块'
+          target_type: importTargetType,
+          category: importCategory || (importTargetType === 'CLEARED' ? '历史清仓' : '同花顺板块')
         }))
       });
       setIsImportModalOpen(false);
       setImportText('');
       setParsedPreview([]);
       onRefresh();
+      fetchClearedPositions();
     } catch (err) {
       alert('确认导入失败');
     } finally {
       setIsSubmitting(false);
     }
   };
+
 
   const handlePurgeZeroVolume = async () => {
     if (!confirm('确定一键清理所有 0 股空仓股票吗？（清理后持仓列表将仅保留当前有实际份额的有效股票）')) return;
@@ -1193,17 +1214,61 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
             </div>
 
-            {/* Target Category Selector */}
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-300">导入后归入目标板块/类型：</label>
-              <input
-                type="text"
-                value={importCategory}
-                onChange={(e) => setImportCategory(e.target.value)}
-                placeholder="如: 同花顺自选 / 持仓股票"
-                className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-medium"
-              />
+            {/* Target Category & Type Selector */}
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-3">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-900 pb-2">
+                <label className="text-xs font-bold text-slate-200">选择数据导入目标分类：</label>
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <label className="flex items-center space-x-1 cursor-pointer text-indigo-300">
+                    <input
+                      type="radio"
+                      name="targetType"
+                      value="POSITION"
+                      checked={importTargetType === 'POSITION'}
+                      onChange={() => setImportTargetType('POSITION')}
+                      className="text-indigo-600 focus:ring-0"
+                    />
+                    <span>💼 当前持仓 (自动对齐清仓)</span>
+                  </label>
+
+                  <label className="flex items-center space-x-1 cursor-pointer text-purple-300">
+                    <input
+                      type="radio"
+                      name="targetType"
+                      value="CLEARED"
+                      checked={importTargetType === 'CLEARED'}
+                      onChange={() => setImportTargetType('CLEARED')}
+                      className="text-purple-600 focus:ring-0"
+                    />
+                    <span>📜 历史清仓归档</span>
+                  </label>
+
+                  <label className="flex items-center space-x-1 cursor-pointer text-slate-300">
+                    <input
+                      type="radio"
+                      name="targetType"
+                      value="WATCHLIST"
+                      checked={importTargetType === 'WATCHLIST'}
+                      onChange={() => setImportTargetType('WATCHLIST')}
+                      className="text-indigo-600 focus:ring-0"
+                    />
+                    <span>🌐 板块自选池</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-400">板块/分组标签名称：</label>
+                <input
+                  type="text"
+                  value={importCategory}
+                  onChange={(e) => setImportCategory(e.target.value)}
+                  placeholder="如: 当前持仓 / 历史清仓 / 热门板块"
+                  className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-medium"
+                />
+              </div>
             </div>
+
 
             {/* Parsed Preview Table */}
             {parsedPreview.length > 0 && (
