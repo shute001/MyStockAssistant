@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { Plus, Upload, Trash2, Clipboard, FileText, Check, FolderPlus, Edit3, Layers, ArrowUpDown, ArrowUp, ArrowDown, MoveRight, AlertTriangle } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Plus, Upload, Trash2, Clipboard, FileText, Check, FolderPlus, Edit3, Layers, ArrowUpDown, ArrowUp, ArrowDown, MoveRight, AlertTriangle, Archive } from 'lucide-react';
 import { PositionItem, WatchlistItem } from '../types';
+
 import axios from 'axios';
 
 interface PortfolioManagerProps {
@@ -16,7 +17,23 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
   onRefresh,
   onSelectStock
 }) => {
-  const [activeTab, setActiveTab] = useState<'position' | 'watchlist'>('position');
+  const [activeTab, setActiveTab] = useState<'position' | 'cleared' | 'watchlist'>('position');
+  const [clearedPositions, setClearedPositions] = useState<PositionItem[]>([]);
+
+
+  useEffect(() => {
+    fetchClearedPositions();
+  }, []);
+
+  const fetchClearedPositions = async () => {
+    try {
+      const res = await axios.get('/api/v1/stocks/positions?status=CLEARED');
+      setClearedPositions(res.data || []);
+    } catch (err) {
+      console.error('Failed to fetch cleared positions:', err);
+    }
+  };
+
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
 
   // Sorting State
@@ -401,24 +418,33 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
       {/* Primary Tab Switcher & Quick Import Banner */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4">
-        <div className="flex items-center space-x-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+        <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
           <button
             onClick={() => { setActiveTab('position'); setSortField(null); setSelectedIds([]); }}
-            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${
+            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
               activeTab === 'position' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            我的持仓股 ({positions.length})
+            💼 当前持仓 ({positions.length})
+          </button>
+          <button
+            onClick={() => { setActiveTab('cleared'); setSortField(null); setSelectedIds([]); fetchClearedPositions(); }}
+            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+              activeTab === 'cleared' ? 'bg-purple-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            📜 历史清仓归档 ({clearedPositions.length})
           </button>
           <button
             onClick={() => { setActiveTab('watchlist'); setSortField(null); setSelectedIds([]); }}
-            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${
+            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
               activeTab === 'watchlist' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            板块自选池 ({watchlists.length})
+            🌐 板块自选池 ({watchlists.length})
           </button>
         </div>
+
 
         <button
           onClick={() => setIsImportModalOpen(true)}
@@ -690,7 +716,89 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                 </tbody>
               </table>
             </div>
+          ) : activeTab === 'cleared' ? (
+            <div className="overflow-x-auto">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="text-xs text-purple-300 font-medium flex items-center space-x-1.5">
+                  <Archive className="w-4 h-4 text-purple-400" />
+                  <span>历史清仓归档列表（共 {clearedPositions.length} 只已清仓股票）</span>
+                </div>
+                {clearedPositions.length > 0 && (
+                  <button
+                    onClick={handlePurgeZeroVolume}
+                    className="px-3 py-1 bg-red-950/80 hover:bg-red-900 border border-red-800/60 text-red-300 text-xs font-semibold rounded-xl flex items-center space-x-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>清空全部 {clearedPositions.length} 条清仓归档</span>
+                  </button>
+                )}
+              </div>
+              <table className="w-full text-left text-sm text-slate-300">
+                <thead className="bg-slate-950 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800 select-none">
+                  <tr>
+                    <th className="py-3 px-4">股票/基金名称与代码</th>
+                    <th className="py-3 px-4 text-right">历史买入成本</th>
+                    <th className="py-3 px-4 text-right">当前最新行情</th>
+                    <th className="py-3 px-4 text-center">持仓状态</th>
+                    <th className="py-3 px-4 text-center">操作</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {clearedPositions.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-xs text-slate-500">
+                        暂无历史清仓归档记录
+                      </td>
+                    </tr>
+                  ) : (
+                    clearedPositions.map((pos) => (
+                      <tr key={pos.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3.5 px-4">
+                          <div
+                            onClick={() => onSelectStock(pos.symbol)}
+                            className="font-bold text-slate-100 hover:text-indigo-400 cursor-pointer flex items-center space-x-2"
+                          >
+                            <span>{pos.name}</span>
+                            {pos.symbol.startsWith('15') || pos.symbol.startsWith('51') ? (
+                              <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/50 rounded-md">
+                                ETF基金
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-slate-800 text-slate-400 rounded-md">
+                                A股股票
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs font-mono text-slate-400">{pos.symbol}</div>
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono text-slate-300">
+                          ¥{pos.cost_price?.toFixed(2)}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-semibold text-slate-100">
+                          ¥{pos.current_price?.toFixed(2)}
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <span className="px-2.5 py-1 text-xs rounded-full bg-purple-950/80 text-purple-300 border border-purple-800/50 font-medium">
+                            已清仓 (0 股)
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <button
+                            onClick={() => handleDeletePosition(pos.id)}
+                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors"
+                            title="删除清仓归档"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           ) : (
+
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm text-slate-300">
                 <thead className="bg-slate-950 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800 select-none">

@@ -24,14 +24,22 @@ class WatchlistCreate(BaseModel):
     remark: Optional[str] = None
 
 @router.get("/positions")
-def get_positions(include_zero: bool = Query(False), db: Session = Depends(get_db)):
+def get_positions(
+    status: Optional[str] = Query("ACTIVE"),
+    include_zero: bool = Query(False),
+    db: Session = Depends(get_db)
+):
     """Fetch all holding positions with real-time indicators in ultra-fast batch mode"""
     query = db.query(Position)
-    if not include_zero:
+    if status == "ACTIVE" and not include_zero:
         query = query.filter(Position.current_volume > 0)
+    elif status == "CLEARED":
+        query = query.filter(Position.current_volume <= 0)
+
     positions = query.all()
     if not positions:
         return []
+
 
     symbols = [pos.symbol for pos in positions]
     batch_quotes = MarketDataService.get_batch_realtime_quotes(symbols)

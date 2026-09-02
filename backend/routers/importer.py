@@ -61,32 +61,29 @@ def confirm_import(payload: ConfirmImportPayload, db: Session = Depends(get_db))
 
         category = item.category if item.category else "同花顺板块"
 
-        if item.target_type == "POSITION" and item.current_volume > 0:
+        if item.target_type == "POSITION":
             pos = db.query(Position).filter(Position.symbol == symbol).first()
+            tag = "当前持仓" if item.current_volume > 0 else "历史清仓"
             if pos:
                 pos.cost_price = item.cost_price if item.cost_price > 0 else pos.cost_price
                 pos.current_volume = item.current_volume
+                pos.strategy_tag = tag
             else:
                 pos = Position(
                     symbol=symbol,
                     cost_price=item.cost_price,
                     current_volume=item.current_volume,
-                    strategy_tag="同花顺导入"
+                    strategy_tag=tag
                 )
                 db.add(pos)
         else:
-            # Clean up 0-volume Position if present
-            pos = db.query(Position).filter(Position.symbol == symbol).first()
-            if pos and item.current_volume <= 0:
-                db.delete(pos)
-
-            # Move or keep in Watchlist
             w = db.query(Watchlist).filter(Watchlist.symbol == symbol).first()
             if not w:
-                w = Watchlist(symbol=symbol, category=category if category != "同花顺板块" else "历史清仓股")
+                w = Watchlist(symbol=symbol, category=category)
                 db.add(w)
             elif category and category != "同花顺板块":
                 w.category = category
+
 
 
         imported_count += 1
