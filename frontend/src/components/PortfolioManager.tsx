@@ -399,11 +399,12 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
         <button
           onClick={() => setIsImportModalOpen(true)}
-          className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-medium text-sm rounded-xl shadow-lg shadow-indigo-600/20 transition-all"
+          className="flex items-center space-x-2 px-4 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all border border-indigo-400/30"
         >
-          <Upload className="w-4 h-4" />
-          <span>同花顺板块/持仓导入 (.sel/.csv)</span>
+          <Upload className="w-4 h-4 text-white" />
+          <span>📥 导入同花顺持仓表 / 板块 (.xls/.htm/.csv)</span>
         </button>
+
       </div>
 
       {/* Flush-Style Sector/Category Tab Bar (Visible when Watchlist active) */}

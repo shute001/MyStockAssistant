@@ -84,6 +84,14 @@ export const Header: React.FC<HeaderProps> = ({
       {/* LLM Status Badge & Actions */}
       <div className="flex items-center space-x-3">
         <button
+          onClick={() => setActiveTab('portfolio')}
+          className="px-3.5 py-1.5 bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-600/60 text-indigo-200 text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-all shadow-md hover:shadow-indigo-600/20"
+        >
+          <TrendingUp className="w-3.5 h-3.5 text-indigo-400" />
+          <span>📥 导入同花顺持仓/交割单</span>
+        </button>
+
+        <button
           onClick={onRefreshData}
           disabled={isRefreshing}
           className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
@@ -91,6 +99,7 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin text-indigo-400' : ''}`} />
         </button>
+
 
         {/* Model Badge */}
         <div
