@@ -24,15 +24,19 @@ class WatchlistCreate(BaseModel):
     remark: Optional[str] = None
 
 @router.get("/positions")
-def get_positions(db: Session = Depends(get_db)):
+def get_positions(include_zero: bool = Query(False), db: Session = Depends(get_db)):
     """Fetch all holding positions with real-time indicators in ultra-fast batch mode"""
-    positions = db.query(Position).all()
+    query = db.query(Position)
+    if not include_zero:
+        query = query.filter(Position.current_volume > 0)
+    positions = query.all()
     if not positions:
         return []
 
     symbols = [pos.symbol for pos in positions]
     batch_quotes = MarketDataService.get_batch_realtime_quotes(symbols)
     result = []
+
 
     for pos in positions:
         stock = db.query(Stock).filter(Stock.symbol == pos.symbol).first()
@@ -261,6 +265,14 @@ def batch_delete_positions(payload: BatchDeletePayload, db: Session = Depends(ge
     deleted = db.query(Position).filter(Position.id.in_(payload.ids)).delete(synchronize_session=False)
     db.commit()
     return {"status": "success", "deleted_count": deleted}
+
+@router.post("/positions/purge-zero-volume")
+def purge_zero_volume_positions(db: Session = Depends(get_db)):
+    """Clean up and purge all 0-volume cleared position entries from database"""
+    deleted_count = db.query(Position).filter(Position.current_volume <= 0).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "success", "purged_count": deleted_count}
+
 
 @router.post("/watchlists/batch-relocate")
 def batch_relocate_watchlists(payload: BatchCategoryRelocatePayload, db: Session = Depends(get_db)):

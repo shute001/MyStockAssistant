@@ -381,8 +381,24 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     }
   };
 
+  const handlePurgeZeroVolume = async () => {
+    if (!confirm('确定一键清理所有 0 股空仓股票吗？（清理后持仓列表将仅保留当前有实际份额的有效股票）')) return;
+    try {
+      const res = await axios.post('/api/v1/stocks/positions/purge-zero-volume');
+      alert(`清理完成！已移除 ${res.data.purged_count} 只 0 股空仓记录。`);
+      onRefresh();
+    } catch (err) {
+      alert('清理 0 股空仓记录失败');
+    }
+  };
+
+  const zeroVolumeCount = useMemo(() => {
+    return positions.filter(p => p.current_volume <= 0).length;
+  }, [positions]);
+
   return (
     <div className="space-y-6">
+
       {/* Primary Tab Switcher & Quick Import Banner */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4">
         <div className="flex items-center space-x-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
@@ -413,6 +429,28 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
         </button>
 
       </div>
+
+      {/* Zero Volume Purge Warning Banner */}
+      {activeTab === 'position' && zeroVolumeCount > 0 && (
+        <div className="bg-amber-950/40 border border-amber-800/60 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-amber-300 shadow-lg">
+          <div className="flex items-center space-x-2.5">
+            <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+            <div>
+              <span className="font-bold">持仓列表智能诊断：</span>
+              <span>检测到当前持仓列表中包含 <strong className="text-amber-200 text-sm font-mono">{zeroVolumeCount}</strong> 只持仓股数为 <strong>0 股</strong> 的已清仓/自选股票。</span>
+            </div>
+          </div>
+
+          <button
+            onClick={handlePurgeZeroVolume}
+            className="px-4 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center space-x-1.5 flex-shrink-0"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>一键清理这 {zeroVolumeCount} 只 0 股空仓股票</span>
+          </button>
+        </div>
+      )}
+
 
       {/* Flush-Style Sector/Category Tab Bar (Visible when Watchlist active) */}
       {activeTab === 'watchlist' && (
