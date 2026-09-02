@@ -163,8 +163,25 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     return list;
   }, [positions, sortField, sortOrder]);
 
+  // Pagination State for Positions & Watchlists
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(15);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, sortField, sortOrder, selectedCategory, pageSize]);
+
+  const paginatedPositions = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return sortedPositions.slice(start, start + pageSize);
+  }, [sortedPositions, currentPage, pageSize]);
+
+  const totalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(sortedPositions.length / pageSize));
+  }, [sortedPositions.length, pageSize]);
+
   // Checkbox selection helpers
-  const currentVisibleItems = activeTab === 'position' ? sortedPositions : sortedWatchlists;
+  const currentVisibleItems = activeTab === 'position' ? paginatedPositions : sortedWatchlists;
   const isAllSelected = currentVisibleItems.length > 0 && currentVisibleItems.every((item) => selectedIds.includes(item.id));
 
   const toggleSelectAll = () => {
@@ -174,6 +191,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
       setSelectedIds(currentVisibleItems.map((item) => item.id));
     }
   };
+
 
   const toggleSelectId = (id: number) => {
     if (selectedIds.includes(id)) {
@@ -690,7 +708,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 bg-slate-900/60 font-mono text-[12px]">
-                  {sortedPositions.map((pos) => {
+                  {paginatedPositions.map((pos) => {
                     const isProfit = pos.profit_loss >= 0;
                     const isTodayProfit = (pos.today_profit_loss || 0) >= 0;
                     return (
@@ -748,7 +766,68 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                   })}
                 </tbody>
               </table>
+
+              {/* Physical Pagination Bar */}
+              <div className="mt-4 pt-3 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400 select-none">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span>
+                    显示第 <strong className="text-slate-200 font-mono">{sortedPositions.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}</strong> 到 <strong className="text-slate-200 font-mono">{Math.min(currentPage * pageSize, sortedPositions.length)}</strong> 条，共 <strong className="text-indigo-400 font-mono">{sortedPositions.length}</strong> 只股票
+                  </span>
+                  <div className="flex items-center space-x-1.5 border-l border-slate-800 pl-3">
+                    <span>每页显示：</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => setPageSize(Number(e.target.value))}
+                      className="bg-slate-950 border border-slate-800 text-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500 font-mono cursor-pointer"
+                    >
+                      <option value={15}>15 条/页</option>
+                      <option value={30}>30 条/页</option>
+                      <option value={50}>50 条/页</option>
+                      <option value={100}>100 条/页</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-1">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
+                    className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-40 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
+                  >
+                    首页
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-40 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
+                  >
+                    上一页
+                  </button>
+                  
+                  <div className="px-3 py-1 font-mono text-slate-300 flex items-center space-x-1">
+                    <span className="text-indigo-400 font-bold">{currentPage}</span>
+                    <span>/</span>
+                    <span>{totalPages}</span>
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-40 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
+                  >
+                    下一页
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages}
+                    className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-40 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
+                  >
+                    末页
+                  </button>
+                </div>
+              </div>
             </div>
+
 
           ) : activeTab === 'cleared' ? (
             <div className="overflow-x-auto">
