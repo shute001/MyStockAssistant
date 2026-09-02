@@ -331,26 +331,33 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     }
   };
 
+  const [selectedFileName, setSelectedFileName] = useState<string>('');
+  const [parseAttempted, setParseAttempted] = useState<boolean>(false);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setSelectedFileName(file.name);
     setIsParsing(true);
+    setParseAttempted(true);
     const formData = new FormData();
     formData.append('file', file);
     try {
       const res = await axios.post('/api/v1/import/upload-file', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      setParsedPreview(res.data.items || []);
+      const items = res.data.items || [];
+      setParsedPreview(items);
       if (res.data.default_category) {
         setImportCategory(res.data.default_category);
       }
     } catch (err) {
-      alert('解析同花顺导出文件 (.sel / .csv / .xlsx / .txt) 失败');
+      alert('解析同花顺导出文件失败，请检查文件格式');
     } finally {
       setIsParsing(false);
     }
   };
+
 
   const handleConfirmImport = async () => {
     if (parsedPreview.length === 0) return;
@@ -886,9 +893,15 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
               />
 
               <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                <label className="w-full sm:w-auto cursor-pointer px-4 py-2 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/50 text-indigo-300 text-xs font-semibold rounded-xl flex items-center justify-center space-x-1.5 transition-all shadow-sm">
+                <label className="w-full sm:w-auto cursor-pointer px-4 py-2.5 bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-xs font-semibold rounded-xl flex items-center justify-center space-x-1.5 transition-all shadow-md">
                   <Upload className="w-4 h-4 text-indigo-400" />
-                  <span>选择同花顺持仓/板块文件 (.xls/.xlsx/.htm/.csv/.sel)</span>
+                  <span>
+                    {isParsing
+                      ? `🔄 正在解析 ${selectedFileName}...`
+                      : selectedFileName
+                      ? `📄 已选择: ${selectedFileName} (点击重新选择)`
+                      : '选择同花顺持仓/板块文件 (.xls/.xlsx/.htm/.csv)'}
+                  </span>
                   <input
                     type="file"
                     accept=".xls,.xlsx,.htm,.html,.csv,.txt,.sel"
@@ -900,12 +913,25 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                 <button
                   onClick={handleParseText}
                   disabled={isParsing || !importText.trim()}
-                  className="w-full sm:w-auto px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-xl border border-slate-700 flex items-center justify-center space-x-1.5"
+                  className="w-full sm:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-xl border border-slate-700 flex items-center justify-center space-x-1.5"
                 >
                   <FileText className="w-4 h-4 text-indigo-400" />
                   <span>{isParsing ? '解析中...' : '解析文本预览'}</span>
                 </button>
               </div>
+
+              {parseAttempted && !isParsing && parsedPreview.length === 0 && (
+                <div className="bg-amber-950/40 border border-amber-800/60 rounded-xl p-3 text-xs text-amber-300 flex items-start space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-bold mb-0.5">文件 [{selectedFileName}] 未能直接识别出有效持仓股票</div>
+                    <div className="text-[11px] text-amber-400/90 leading-relaxed">
+                      💡 极速解决方案：您可以直接用 Excel/记事本打开该文件全选内容复制（Ctrl+A / Ctrl+C），粘贴至上方框中，点击【解析文本预览】即可 100% 提取！
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
 
             {/* Target Category Selector */}
