@@ -606,11 +606,11 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
         {/* Table View (3 cols) */}
         <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-2xl p-6">
           {activeTab === 'position' ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-300">
-                <thead className="bg-slate-950 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800 select-none">
+            <div className="overflow-x-auto rounded-xl border border-slate-800 shadow-inner">
+              <table className="w-full text-left text-xs whitespace-nowrap">
+                <thead className="bg-slate-950 text-[11px] font-semibold text-slate-400 border-b border-slate-800 select-none sticky top-0 z-10">
                   <tr>
-                    <th className="py-3 px-3 w-10 text-center">
+                    <th className="py-3 px-2 text-center w-8">
                       <input
                         type="checkbox"
                         checked={isAllSelected}
@@ -618,104 +618,138 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                         className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 cursor-pointer"
                       />
                     </th>
-                    <th onClick={() => handleSort('name')} className="py-3 px-4 cursor-pointer hover:text-indigo-400 transition-colors">
+                    <th onClick={() => handleSort('symbol')} className="py-3 px-3 cursor-pointer hover:text-indigo-300">
                       <div className="flex items-center space-x-1">
-                        <span>股票名称/代码</span>
+                        <span>证券代码</span>
+                        {renderSortIcon('symbol')}
+                      </div>
+                    </th>
+                    <th onClick={() => handleSort('name')} className="py-3 px-3 cursor-pointer hover:text-indigo-300">
+                      <div className="flex items-center space-x-1">
+                        <span>证券名称</span>
                         {renderSortIcon('name')}
                       </div>
                     </th>
-                    <th onClick={() => handleSort('cost_price')} className="py-3 px-4 text-right cursor-pointer hover:text-indigo-400 transition-colors">
+                    <th onClick={() => handleSort('current_volume')} className="py-3 px-3 text-right cursor-pointer hover:text-indigo-300">
                       <div className="flex items-center justify-end space-x-1">
-                        <span>持仓成本</span>
-                        {renderSortIcon('cost_price')}
-                      </div>
-                    </th>
-                    <th onClick={() => handleSort('current_volume')} className="py-3 px-4 text-right cursor-pointer hover:text-indigo-400 transition-colors">
-                      <div className="flex items-center justify-end space-x-1">
-                        <span>持仓数量</span>
+                        <span>股票余额</span>
                         {renderSortIcon('current_volume')}
                       </div>
                     </th>
-                    <th onClick={() => handleSort('current_price')} className="py-3 px-4 text-right cursor-pointer hover:text-indigo-400 transition-colors">
+                    <th className="py-3 px-3 text-right">可用余额</th>
+                    <th onClick={() => handleSort('cost_price')} className="py-3 px-3 text-right cursor-pointer hover:text-indigo-300">
                       <div className="flex items-center justify-end space-x-1">
-                        <span>最新行情</span>
+                        <span>成本价</span>
+                        {renderSortIcon('cost_price')}
+                      </div>
+                    </th>
+                    <th onClick={() => handleSort('current_price')} className="py-3 px-3 text-right cursor-pointer hover:text-indigo-300">
+                      <div className="flex items-center justify-end space-x-1">
+                        <span>市价</span>
                         {renderSortIcon('current_price')}
                       </div>
                     </th>
-                    <th onClick={() => handleSort('profit_loss')} className="py-3 px-4 text-right cursor-pointer hover:text-indigo-400 transition-colors">
+                    <th onClick={() => handleSort('profit_loss')} className="py-3 px-3 text-right cursor-pointer hover:text-indigo-300">
                       <div className="flex items-center justify-end space-x-1">
-                        <span>持仓盈亏</span>
+                        <span>盈亏</span>
                         {renderSortIcon('profit_loss')}
                       </div>
                     </th>
-                    <th onClick={() => handleSort('strategy_tag')} className="py-3 px-4 text-center cursor-pointer hover:text-indigo-400 transition-colors">
-                      <div className="flex items-center justify-center space-x-1">
-                        <span>策略标签</span>
-                        {renderSortIcon('strategy_tag')}
+                    <th onClick={() => handleSort('profit_ratio')} className="py-3 px-3 text-right cursor-pointer hover:text-indigo-300">
+                      <div className="flex items-center justify-end space-x-1">
+                        <span>盈亏比例(%)</span>
+                        {renderSortIcon('profit_ratio')}
                       </div>
                     </th>
-                    <th className="py-3 px-4 text-center">操作</th>
+                    <th onClick={() => handleSort('today_profit_loss')} className="py-3 px-3 text-right cursor-pointer hover:text-indigo-300">
+                      <div className="flex items-center justify-end space-x-1">
+                        <span>当日盈亏</span>
+                        {renderSortIcon('today_profit_loss')}
+                      </div>
+                    </th>
+                    <th onClick={() => handleSort('today_profit_loss_ratio')} className="py-3 px-3 text-right cursor-pointer hover:text-indigo-300">
+                      <div className="flex items-center justify-end space-x-1">
+                        <span>当日盈亏比(%)</span>
+                        {renderSortIcon('today_profit_loss_ratio')}
+                      </div>
+                    </th>
+                    <th onClick={() => handleSort('market_value')} className="py-3 px-3 text-right cursor-pointer hover:text-indigo-300">
+                      <div className="flex items-center justify-end space-x-1">
+                        <span>市值</span>
+                        {renderSortIcon('market_value')}
+                      </div>
+                    </th>
+                    <th onClick={() => handleSort('position_weight')} className="py-3 px-3 text-right cursor-pointer hover:text-indigo-300">
+                      <div className="flex items-center justify-end space-x-1">
+                        <span>仓位占比(%)</span>
+                        {renderSortIcon('position_weight')}
+                      </div>
+                    </th>
+                    <th className="py-3 px-3 text-center">交易市场</th>
+                    <th className="py-3 px-3 text-center">操作</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {sortedPositions.map((pos) => (
-                    <tr key={pos.id} className={`hover:bg-slate-800/50 transition-colors ${selectedIds.includes(pos.id) ? 'bg-indigo-950/30' : ''}`}>
-                      <td className="py-3.5 px-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.includes(pos.id)}
-                          onChange={() => toggleSelectId(pos.id)}
-                          className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 cursor-pointer"
-                        />
-                      </td>
-                      <td
-                        onClick={() => onSelectStock(pos.symbol)}
-                        className="py-3.5 px-4 font-medium text-slate-100 cursor-pointer"
-                      >
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-slate-100">{pos.name}</span>
-                          {(pos.symbol.startsWith('5') || pos.symbol.startsWith('1') || pos.name.includes('ETF') || pos.name.includes('基金')) ? (
-                            <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/50 rounded-md">
-                              ETF基金
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-slate-800 text-slate-400 rounded-md">
-                              A股股票
+                <tbody className="divide-y divide-slate-800/80 bg-slate-900/60 font-mono text-[12px]">
+                  {sortedPositions.map((pos) => {
+                    const isProfit = pos.profit_loss >= 0;
+                    const isTodayProfit = (pos.today_profit_loss || 0) >= 0;
+                    return (
+                      <tr key={pos.id} className={`hover:bg-slate-800/60 transition-colors ${selectedIds.includes(pos.id) ? 'bg-indigo-950/40' : ''}`}>
+                        <td className="py-3 px-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(pos.id)}
+                            onChange={() => toggleSelectId(pos.id)}
+                            className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 cursor-pointer"
+                          />
+                        </td>
+                        <td className="py-3 px-3 text-slate-300 font-semibold">{pos.symbol}</td>
+                        <td
+                          onClick={() => onSelectStock(pos.symbol)}
+                          className="py-3 px-3 font-sans font-bold text-slate-100 hover:text-indigo-400 cursor-pointer flex items-center space-x-1.5"
+                        >
+                          <span>{pos.name}</span>
+                          {(pos.symbol.startsWith('5') || pos.symbol.startsWith('1') || pos.name.includes('ETF') || pos.name.includes('基金')) && (
+                            <span className="px-1.5 py-0.5 text-[9px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/50 rounded">
+                              ETF
                             </span>
                           )}
-                        </div>
-                        <div className="text-xs font-mono text-slate-400">{pos.symbol}</div>
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono text-slate-300">
-                        ¥{pos.cost_price?.toFixed(2)}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono text-slate-300">
-                        {pos.current_volume} 股
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-semibold text-slate-100">
-                        ¥{pos.current_price?.toFixed(2)}
-                      </td>
-                      <td className={`py-3.5 px-4 text-right font-mono font-bold ${pos.profit_loss >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                        {pos.profit_loss >= 0 ? '+' : ''}¥{pos.profit_loss?.toFixed(2)} ({pos.profit_ratio?.toFixed(2)}%)
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <span className="px-2.5 py-1 text-xs rounded-full bg-slate-800 text-indigo-300 font-medium">
-                          {pos.strategy_tag}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <button
-                          onClick={() => handleDeletePosition(pos.id)}
-                          className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-3 px-3 text-right text-slate-200">{pos.current_volume}</td>
+                        <td className="py-3 px-3 text-right text-slate-300">{pos.available_volume ?? pos.current_volume}</td>
+                        <td className="py-3 px-3 text-right text-slate-300">{pos.cost_price?.toFixed(3)}</td>
+                        <td className="py-3 px-3 text-right font-bold text-slate-100">{pos.current_price?.toFixed(3)}</td>
+                        <td className={`py-3 px-3 text-right font-bold ${isProfit ? 'text-red-400' : 'text-emerald-400'}`}>
+                          {isProfit ? '+' : ''}{pos.profit_loss?.toFixed(2)}
+                        </td>
+                        <td className={`py-3 px-3 text-right font-bold ${isProfit ? 'text-red-400' : 'text-emerald-400'}`}>
+                          {isProfit ? '+' : ''}{pos.profit_ratio?.toFixed(2)}%
+                        </td>
+                        <td className={`py-3 px-3 text-right font-bold ${isTodayProfit ? 'text-red-400' : 'text-emerald-400'}`}>
+                          {isTodayProfit ? '+' : ''}{pos.today_profit_loss?.toFixed(2)}
+                        </td>
+                        <td className={`py-3 px-3 text-right font-bold ${isTodayProfit ? 'text-red-400' : 'text-emerald-400'}`}>
+                          {isTodayProfit ? '+' : ''}{pos.today_profit_loss_ratio?.toFixed(2)}%
+                        </td>
+                        <td className="py-3 px-3 text-right font-bold text-slate-100">{pos.market_value?.toFixed(2)}</td>
+                        <td className="py-3 px-3 text-right font-semibold text-indigo-300">{pos.position_weight?.toFixed(2)}%</td>
+                        <td className="py-3 px-3 text-center font-sans text-xs text-slate-400">{pos.market_name || (pos.symbol.startsWith('6') ? '上海A股' : '深圳A股')}</td>
+                        <td className="py-3 px-3 text-center">
+                          <button
+                            onClick={() => handleDeletePosition(pos.id)}
+                            className="p-1 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
+                            title="删除持仓"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
+
           ) : activeTab === 'cleared' ? (
             <div className="overflow-x-auto">
               <div className="mb-4 flex items-center justify-between">

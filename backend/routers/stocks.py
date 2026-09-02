@@ -46,6 +46,13 @@ def get_positions(
     result = []
 
 
+    # Calculate total portfolio market value for position weights
+    total_portfolio_market_value = 0.0
+    for pos in positions:
+        quote = batch_quotes.get(pos.symbol, {})
+        cp = quote.get("current_price") or pos.cost_price
+        total_portfolio_market_value += cp * pos.current_volume
+
     for pos in positions:
         stock = db.query(Stock).filter(Stock.symbol == pos.symbol).first()
         quote = batch_quotes.get(pos.symbol, {})
@@ -61,30 +68,50 @@ def get_positions(
 
         current_price = quote.get("current_price") or pos.cost_price
         pct_chg = quote.get("pct_chg", "0.00%")
+        pct_num = quote.get("pct_chg_num", 0.0)
+
         total_cost = pos.cost_price * pos.current_volume
         current_value = current_price * pos.current_volume
         profit_loss = current_value - total_cost
-        profit_ratio = (profit_loss / total_cost * 100) if total_cost > 0 else 0.0
+        profit_ratio = (profit_loss / total_cost * 100.0) if total_cost > 0 else 0.0
+
+        today_pl = (pct_num / 100.0) * current_value
+        weight = (current_value / total_portfolio_market_value * 100.0) if total_portfolio_market_value > 0 else 0.0
+
+        # Market Name Identification
+        if pos.symbol.startswith(("6", "5", "688")):
+            market_name = "上海A股"
+        elif pos.symbol.startswith(("0", "3", "1", "15")):
+            market_name = "深圳A股"
+        else:
+            market_name = "北京A股"
 
         result.append({
             "id": pos.id,
             "symbol": pos.symbol,
             "name": real_name,
-            "cost_price": pos.cost_price,
             "current_volume": pos.current_volume,
+            "available_volume": pos.current_volume,
+            "cost_price": round(pos.cost_price, 3),
+            "current_price": round(current_price, 3),
+            "profit_loss": round(profit_loss, 3),
+            "profit_ratio": round(profit_ratio, 3),
+            "today_profit_loss": round(today_pl, 3),
+            "today_profit_loss_ratio": round(pct_num, 3),
+            "market_value": round(current_value, 3),
+            "position_weight": round(weight, 2),
+            "market_name": market_name,
             "strategy_tag": pos.strategy_tag,
-            "current_price": current_price,
             "total_cost": round(total_cost, 2),
             "current_value": round(current_value, 2),
-            "profit_loss": round(profit_loss, 2),
-            "profit_ratio": round(profit_ratio, 2),
             "pct_chg": pct_chg,
             "ma_trend": "多头震荡",
-            "macd_status": "看多" if quote.get("pct_chg_num", 0) >= 0 else "回调",
+            "macd_status": "看多" if pct_num >= 0 else "回调",
             "support_price": round(current_price * 0.95, 2),
             "resistance_price": round(current_price * 1.05, 2)
         })
     return result
+
 
 @router.post("/positions")
 def create_position(item: PositionCreate, db: Session = Depends(get_db)):

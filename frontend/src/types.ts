@@ -4,18 +4,25 @@ export interface PositionItem {
   name: string;
   cost_price: number;
   current_volume: number;
+  available_volume?: number;
   strategy_tag: string;
   current_price: number;
   total_cost: number;
   current_value: number;
   profit_loss: number;
   profit_ratio: number;
+  today_profit_loss?: number;
+  today_profit_loss_ratio?: number;
+  market_value?: number;
+  position_weight?: number;
+  market_name?: string;
   pct_chg: string;
   ma_trend: string;
   macd_status: string;
   support_price?: number;
   resistance_price?: number;
 }
+
 
 export interface WatchlistItem {
   id: number;
