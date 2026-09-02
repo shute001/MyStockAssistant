@@ -861,7 +861,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
                 <Clipboard className="w-5 h-5 text-indigo-400" />
-                同花顺板块/持仓快速导入
+                <span>同花顺板块 / 历史持仓表快速导入</span>
               </h3>
               <button
                 onClick={() => setIsImportModalOpen(false)}
@@ -873,24 +873,24 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
             <div className="space-y-3">
               <p className="text-xs text-slate-400">
-                请选择上传同花顺导出的板块二进制文件 (<strong>.sel</strong>) 或从同花顺复制粘贴：
+                请选择上传同花顺导出的<strong>历史/当前持仓表</strong>或自选股文件 (支持 <strong>.xls / .xlsx / .htm / .csv / .sel / .txt</strong>)：
               </p>
 
               <textarea
                 rows={4}
-                placeholder="例如粘贴：&#10;600519 贵州茅台 100 1650.50&#10;510300 沪深300ETF 1000 4.68"
+                placeholder="或直接粘贴同花顺持仓/自选数据，格式如：&#10;600519 贵州茅台 100 1650.50&#10;510300 沪深300ETF 1000 4.68"
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
               />
 
               <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                <label className="w-full sm:w-auto cursor-pointer px-4 py-2 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/50 text-indigo-300 text-xs font-semibold rounded-xl flex items-center justify-center space-x-1.5 transition-all">
+                <label className="w-full sm:w-auto cursor-pointer px-4 py-2 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/50 text-indigo-300 text-xs font-semibold rounded-xl flex items-center justify-center space-x-1.5 transition-all shadow-sm">
                   <Upload className="w-4 h-4 text-indigo-400" />
-                  <span>上传同花顺 .sel / .csv / .xlsx 文件</span>
+                  <span>选择同花顺持仓/板块文件 (.xls/.xlsx/.htm/.csv/.sel)</span>
                   <input
                     type="file"
-                    accept=".sel,.csv,.xlsx,.xls,.txt"
+                    accept=".xls,.xlsx,.htm,.html,.csv,.txt,.sel"
                     onChange={handleFileUpload}
                     className="hidden"
                   />
@@ -909,37 +909,50 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
             {/* Target Category Selector */}
             <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-300">导入后存入板块名称：</label>
+              <label className="text-xs font-semibold text-slate-300">导入后归入目标板块/类型：</label>
               <input
                 type="text"
                 value={importCategory}
                 onChange={(e) => setImportCategory(e.target.value)}
-                placeholder="如: 同花顺自选 / 半导体龙头"
-                className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+                placeholder="如: 同花顺自选 / 持仓股票"
+                className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-medium"
               />
             </div>
 
             {/* Parsed Preview Table */}
             {parsedPreview.length > 0 && (
               <div className="space-y-3 border-t border-slate-800 pt-3">
-                <h4 className="text-xs font-bold text-slate-300">已识别 ({parsedPreview.length} 项股票/ETF):</h4>
-                <div className="max-h-40 overflow-y-auto border border-slate-800 rounded-xl bg-slate-950 p-2">
+                <h4 className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                  <span>已识别 ({parsedPreview.length} 项持仓/自选股票):</span>
+                  <span className="text-[11px] text-emerald-400">一键同步至系统数据库</span>
+                </h4>
+                <div className="max-h-48 overflow-y-auto border border-slate-800 rounded-xl bg-slate-950 p-2">
                   <table className="w-full text-xs text-slate-300 text-left">
                     <thead>
                       <tr className="text-slate-500 border-b border-slate-800">
-                        <th className="py-1 px-2">代码</th>
-                        <th className="py-1 px-2">名称</th>
-                        <th className="py-1 px-2 text-right">持仓量</th>
-                        <th className="py-1 px-2 text-right">成本价</th>
+                        <th className="py-1.5 px-2">代码</th>
+                        <th className="py-1.5 px-2">名称</th>
+                        <th className="py-1.5 px-2 text-right">持仓股数</th>
+                        <th className="py-1.5 px-2 text-right">持仓成本价</th>
+                        <th className="py-1.5 px-2 text-right">浮动盈亏</th>
                       </tr>
                     </thead>
                     <tbody>
                       {parsedPreview.map((item, idx) => (
-                        <tr key={idx} className="border-b border-slate-900">
+                        <tr key={idx} className="border-b border-slate-900 hover:bg-slate-900/60">
                           <td className="py-1.5 px-2 font-mono text-indigo-300">{item.symbol}</td>
-                          <td className="py-1.5 px-2 font-bold">{item.name}</td>
-                          <td className="py-1.5 px-2 text-right font-mono">{item.current_volume}</td>
-                          <td className="py-1.5 px-2 text-right font-mono">¥{item.cost_price}</td>
+                          <td className="py-1.5 px-2 font-bold text-slate-100">{item.name}</td>
+                          <td className="py-1.5 px-2 text-right font-mono text-slate-200">
+                            {item.current_volume ? item.current_volume.toLocaleString() : '-'}
+                          </td>
+                          <td className="py-1.5 px-2 text-right font-mono text-slate-200">
+                            {item.cost_price ? `¥${item.cost_price.toFixed(2)}` : '-'}
+                          </td>
+                          <td className={`py-1.5 px-2 text-right font-mono font-bold ${
+                            item.profit_loss > 0 ? 'text-red-400' : (item.profit_loss < 0 ? 'text-emerald-400' : 'text-slate-400')
+                          }`}>
+                            {item.profit_loss ? `¥${item.profit_loss.toLocaleString()}` : '-'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -959,7 +972,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                     className="px-5 py-2 bg-indigo-600 text-white text-xs font-semibold rounded-xl hover:bg-indigo-500 shadow-md flex items-center space-x-1"
                   >
                     <Check className="w-4 h-4" />
-                    <span>确认划入【{importCategory || '同花顺板块'}】</span>
+                    <span>确认同步这 {parsedPreview.length} 项至系统</span>
                   </button>
                 </div>
               </div>
@@ -967,6 +980,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
           </div>
         </div>
       )}
+
     </div>
   );
 };

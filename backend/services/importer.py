@@ -1,7 +1,9 @@
 import re
+import io
 import pandas as pd
 from typing import List, Dict, Any
 from services.market_data import MarketDataService
+
 
 class FlushImporterService:
     """Flush (同花顺) Portfolio & Watchlist Import Engine"""
@@ -91,39 +93,72 @@ class FlushImporterService:
 
     @staticmethod
     def parse_file(file_content: bytes, filename: str) -> List[Dict[str, Any]]:
-        """Parse exported file from Flush client (.sel, .csv, .xlsx, .xls, .txt)"""
+        """Parse exported file from Flush client (.sel, .csv, .xlsx, .xls, .htm, .html, .txt)"""
         filename_lower = filename.lower()
         
         # Handle Flush .sel binary file
         if filename_lower.endswith(".sel"):
             return FlushImporterService.parse_sel_file(file_content)
 
-        # Handle CSV / Excel / Text files
+        # Handle CSV / Excel / HTML / Text files
         items = []
+        df = None
         try:
-            if filename_lower.endswith(".xlsx") or filename_lower.endswith(".xls"):
-                df = pd.read_excel(file_content)
-            elif filename_lower.endswith(".txt"):
+            try:
+                html_str = file_content.decode("gbk", errors="ignore")
+                if "<table" in html_str.lower():
+                    dfs = pd.read_html(io.StringIO(html_str))
+                    if dfs:
+                        df = dfs[0]
+            except Exception:
+                pass
+
+
+
+            # 2. Try parsing Excel binary/openpyxl if HTML didn't yield dataframe
+            if df is None or df.empty:
+                if filename_lower.endswith(".xlsx") or filename_lower.endswith(".xls"):
+                    try:
+                        df = pd.read_excel(file_content)
+                    except Exception:
+                        pass
+
+            # 3. Try parsing CSV or plain TXT text
+            if df is None or df.empty:
+                if filename_lower.endswith(".txt"):
+                    text = file_content.decode("gbk", errors="ignore")
+                    return FlushImporterService.parse_clipboard_text(text)
+                else:
+                    try:
+                        df = pd.read_csv(pd.io.common.BytesIO(file_content), encoding="gbk")
+                    except Exception:
+                        df = pd.read_csv(pd.io.common.BytesIO(file_content), encoding="utf-8-sig")
+
+            if df is None or df.empty:
                 text = file_content.decode("gbk", errors="ignore")
                 return FlushImporterService.parse_clipboard_text(text)
-            else:
-                # Flush CSV files are often encoded in GBK or GB2312
-                try:
-                    df = pd.read_csv(pd.io.common.BytesIO(file_content), encoding="gbk")
-                except Exception:
-                    df = pd.read_csv(pd.io.common.BytesIO(file_content), encoding="utf-8-sig")
+
+            # Promote row 0 to header if columns are integer indices
+            if all(isinstance(c, int) for c in df.columns) or any(str(c).isdigit() for c in df.columns):
+                if len(df) > 0:
+                    first_row = [str(x).strip() for x in df.iloc[0].values]
+                    if any("代码" in col or "名称" in col for col in first_row):
+                        df.columns = first_row
+                        df = df.iloc[1:].reset_index(drop=True)
 
             # Standardize column headers
             columns = [str(col).strip() for col in df.columns]
             df.columns = columns
 
-            symbol_col = next((col for col in columns if "代码" in col or "Symbol" in col), None)
+
+            symbol_col = next((col for col in columns if "代码" in col or "Symbol" in col or "证券" in col and "代码" in col), None)
             name_col = next((col for col in columns if "名称" in col or "Name" in col), None)
-            vol_col = next((col for col in columns if "数量" in col or "持仓" in col or "Volume" in col), None)
-            cost_col = next((col for col in columns if "成本" in col or "Cost" in col), None)
+            vol_col = next((col for col in columns if "数量" in col or "持仓" in col or "余额" in col or "Volume" in col), None)
+            cost_col = next((col for col in columns if "成本" in col or "Cost" in col or "保本" in col), None)
+            price_col = next((col for col in columns if "当前" in col or "市价" in col or "最新" in col or "Price" in col), None)
+            pl_col = next((col for col in columns if "盈亏" in col or "浮动" in col or "Profit" in col), None)
 
             if not symbol_col:
-                # Fallback binary/text parsing if CSV column headers not matched
                 text = file_content.decode("gbk", errors="ignore")
                 return FlushImporterService.parse_clipboard_text(text)
 
@@ -148,14 +183,30 @@ class FlushImporterService:
                     except ValueError:
                         cost_price = 0.0
 
+                current_price = 0.0
+                if price_col and pd.notna(row[price_col]):
+                    try:
+                        current_price = float(str(row[price_col]).replace(",", ""))
+                    except ValueError:
+                        current_price = 0.0
+
+                profit_loss = 0.0
+                if pl_col and pd.notna(row[pl_col]):
+                    try:
+                        profit_loss = float(str(row[pl_col]).replace(",", ""))
+                    except ValueError:
+                        profit_loss = 0.0
+
                 items.append({
                     "symbol": symbol,
                     "name": name,
                     "current_volume": volume,
-                    "cost_price": cost_price
+                    "cost_price": cost_price,
+                    "current_price": current_price,
+                    "profit_loss": profit_loss
                 })
         except Exception as e:
-            # Fallback binary/text extraction if standard parser fails
             return FlushImporterService.parse_sel_file(file_content)
 
-        return items
+        return MarketDataService.enrich_stock_names(items)
+
