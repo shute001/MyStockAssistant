@@ -17,7 +17,7 @@ interface TradeReviewTabProps {
 
 export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, onRefreshAll }) => {
   const [trades, setTrades] = useState<TradeRecordItem[]>([]);
-  const [stats, setStats] = useState({ total_trades: 0, buy_count: 0, sell_count: 0, total_buy_amount: 0, total_sell_amount: 0 });
+  const [stats, setStats] = useState({ total_trades: 0, buy_count: 0, sell_count: 0, total_buy_amount: 0, total_sell_amount: 0, realized_pnl: 0, net_cash_flow: 0, total_fees: 0, unmatched_sell_volume: 0 });
   const [memories, setMemories] = useState<AgentMemoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -127,7 +127,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
       const res = await axios.get('/api/v1/trades', { params });
       setTrades(res.data.items || []);
-      setStats(res.data.stats || { total_trades: 0, buy_count: 0, sell_count: 0, total_buy_amount: 0, total_sell_amount: 0 });
+      setStats(res.data.stats || { total_trades: 0, buy_count: 0, sell_count: 0, total_buy_amount: 0, total_sell_amount: 0, realized_pnl: 0, net_cash_flow: 0, total_fees: 0, unmatched_sell_volume: 0 });
       if (res.data.pagination) {
         setTotalPages(res.data.pagination.total_pages || 1);
       }
@@ -460,7 +460,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   return (
     <div className="space-y-6">
       {/* Top Banner & Quick Actions */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+      <div className="surface-card bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 rounded-2xl p-5 sm:p-6">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center space-x-4">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
@@ -549,10 +549,12 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
             </div>
           </div>
           <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
-            <div className="text-[11px] text-slate-400">累计成交总额</div>
-            <div className="text-lg font-bold font-mono text-indigo-300 mt-1">
-              ¥{(stats.total_buy_amount + stats.total_sell_amount).toLocaleString()}
+            <div className="text-[11px] text-slate-400">已实现盈亏（FIFO）</div>
+            <div className={`text-lg font-bold font-mono mt-1 ${stats.realized_pnl >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              {stats.realized_pnl >= 0 ? '+' : ''}¥{stats.realized_pnl.toLocaleString()}
             </div>
+            <div className="mt-0.5 text-[10px] text-slate-500">费用 ¥{stats.total_fees.toLocaleString()}</div>
+            {stats.unmatched_sell_volume > 0 && <div className="mt-1 text-[10px] text-amber-300">{stats.unmatched_sell_volume} 股卖出缺少可匹配成本，不计入盈亏</div>}
           </div>
           <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
             <div className="text-[11px] text-slate-400 flex items-center justify-between">
@@ -571,7 +573,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       {/* Main Content Grid (Trade Log + Agent Memory Vault) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Trade Log Table (2 cols) */}
-        <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+        <div className="surface-card lg:col-span-2 rounded-2xl p-4 sm:p-5 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
               <Calendar className="w-4 h-4 text-indigo-400" />
@@ -825,7 +827,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
 
         {/* Right: Agent Memory Vault (1 col) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 flex flex-col justify-between">
+        <div className="surface-card rounded-2xl p-5 space-y-4 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
@@ -927,12 +929,12 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                   </h1>
                 ),
                 h2: ({ children }) => (
-                  <h2 className="text-base font-bold text-purple-200 mt-5 mb-3 pt-3 border-t border-slate-800/60 flex items-center gap-2">
+                  <h2 className="text-base font-bold text-purple-200 mt-5 mb-2.5 pt-3 border-t border-slate-800/60 flex items-center gap-2">
                     <span>{children}</span>
                   </h2>
                 ),
                 h3: ({ children }) => (
-                  <h3 className="text-xs sm:text-sm font-bold text-slate-100 mt-3 mb-2 bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl text-purple-300">
+                  <h3 className="text-xs sm:text-sm font-bold text-purple-300 mt-4 mb-2 flex items-center gap-1.5">
                     <span>{children}</span>
                   </h3>
                 ),
@@ -942,19 +944,23 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                   </p>
                 ),
                 strong: ({ children }) => (
-                  <strong className="font-semibold text-purple-300 bg-purple-950/70 border border-purple-800/50 px-1.5 py-0.5 rounded text-[12px] font-mono">
+                  <strong className="font-bold text-purple-300 font-sans">
                     {children}
                   </strong>
                 ),
                 ul: ({ children }) => (
-                  <ul className="space-y-2 my-2.5 pl-1">
+                  <ul className="space-y-1.5 my-2.5 pl-4 list-disc text-slate-300">
                     {children}
                   </ul>
                 ),
+                ol: ({ children }) => (
+                  <ol className="space-y-1.5 my-2.5 pl-4 list-decimal text-slate-300">
+                    {children}
+                  </ol>
+                ),
                 li: ({ children }) => (
-                  <li className="text-xs sm:text-sm text-slate-300 flex items-start gap-2 leading-relaxed">
-                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-2 flex-shrink-0"></span>
-                    <div className="flex-1">{children}</div>
+                  <li className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                    {children}
                   </li>
                 ),
                 blockquote: ({ children }) => (
@@ -974,7 +980,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       {/* Modal 1: Add Single Trade */}
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+          <div className="surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-100">新增每日交易记录</h3>
               <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-200">✕</button>
@@ -1092,7 +1098,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       {/* Modal 2: Import Clipboard Trades */}
       {isImportModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+          <div className="surface-card rounded-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                 <Clipboard className="w-4 h-4 text-indigo-400" />
@@ -1200,7 +1206,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       {/* Modal 3: Add Manual Agent Memory */}
       {isMemoryModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+          <div className="surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                 <Brain className="w-4 h-4 text-purple-400" />
@@ -1252,7 +1258,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       {/* Modal 4: Edit Strategy Reason */}
       {isEditReasonModalOpen && editingTrade && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+          <div className="surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                 <Edit3 className="w-4 h-4 text-indigo-400" />
@@ -1306,7 +1312,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       {/* Modal 5: Agent Interactive Chat Window */}
       {isChatModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+          <div className="surface-card rounded-2xl max-w-3xl w-full h-[85vh] flex flex-col shadow-2xl overflow-hidden">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-950/60">
               <div className="flex items-center space-x-3">

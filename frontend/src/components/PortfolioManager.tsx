@@ -456,7 +456,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     <div className="space-y-6">
 
       {/* Primary Tab Switcher & Quick Import Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="surface-card rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
           <button
             onClick={() => { setActiveTab('position'); setSortField(null); setSelectedIds([]); }}
@@ -519,7 +519,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
       {/* Flush-Style Sector/Category Tab Bar (Visible when Watchlist active) */}
       {activeTab === 'watchlist' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="surface-card rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => { setSelectedCategory('ALL'); setSelectedIds([]); }}
@@ -643,7 +643,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
       {/* Main Table & Add Form Area */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Table View (3 cols) */}
-        <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-2xl p-6">
+        <div className="surface-card lg:col-span-3 rounded-2xl p-4 sm:p-6">
           {activeTab === 'position' ? (
             <div className="overflow-x-auto rounded-xl border border-slate-800 shadow-inner">
               <table className="w-full text-left text-xs whitespace-nowrap">
@@ -1047,7 +1047,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
         </div>
 
         {/* Manual Add Card (1 col) */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+        <div className="surface-card rounded-2xl p-5 space-y-4">
           <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
             <Plus className="w-4 h-4 text-indigo-400" />
             {activeTab === 'position' ? '手动新增持仓股' : '手动新增自选股'}
@@ -1145,7 +1145,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
       {/* Flush Import Modal */}
       {isImportModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 space-y-5 shadow-2xl">
+          <div className="surface-card rounded-2xl max-w-2xl w-full p-5 sm:p-6 space-y-5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
                 <Clipboard className="w-5 h-5 text-indigo-400" />

@@ -49,7 +49,7 @@ def main():
     print("[*] 正在启动后端服务 (FastAPI - http://127.0.0.1:8000)...")
     if sys.platform == "win32":
         subprocess.Popen(
-            f'start "StockAssistant - Backend" /D "{backend_dir}" "{python_cmd}" main.py',
+            f'start "StockAssistant - Backend" /D "{backend_dir}" cmd /k "{python_cmd}" main.py',
             shell=True
         )
     else:
@@ -58,7 +58,7 @@ def main():
     print("[*] 正在启动前端服务 (Vite - http://localhost:5173)...")
     if sys.platform == "win32":
         subprocess.Popen(
-            f'start "StockAssistant - Frontend" /D "{frontend_dir}" npm run dev',
+            f'start "StockAssistant - Frontend" /D "{frontend_dir}" cmd /k npm run dev',
             shell=True
         )
     else:

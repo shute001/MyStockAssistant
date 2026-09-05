@@ -25,6 +25,19 @@ except ImportError:
 class MarketDataService:
     """A-Share Market Data Service using AkShare & pandas-ta"""
 
+    _quote_health: Dict[str, Any] = {
+        "status": "unknown",
+        "source": "Tencent Finance",
+        "updated_at": None,
+        "message": "尚未请求行情"
+    }
+    _kline_health: Dict[str, Any] = {
+        "status": "unknown",
+        "source": None,
+        "updated_at": None,
+        "message": "尚未请求 K 线"
+    }
+
     _STOCK_NAME_CACHE: Dict[str, str] = {
         "600519": "贵州茅台",
         "000001": "平安银行",
@@ -42,6 +55,18 @@ class MarketDataService:
         if len(symbol) < 6:
             symbol = symbol.zfill(6)
         return symbol
+
+    @staticmethod
+    def _now_text() -> str:
+        return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+
+    @classmethod
+    def get_data_health(cls) -> Dict[str, Dict[str, Any]]:
+        """Return non-price metadata so clients can distinguish live, delayed and mock data."""
+        return {
+            "quote": dict(cls._quote_health),
+            "kline": dict(cls._kline_health)
+        }
 
     @staticmethod
     def get_symbol_prefix_and_market(symbol: str) -> tuple[str, str]:
@@ -128,8 +153,20 @@ class MarketDataService:
                         "pct_chg": f"{pct:+.2f}%",
                         "pct_chg_num": pct
                     }
+            cls._quote_health = {
+                "status": "live" if results else "unavailable",
+                "source": "Tencent Finance",
+                "updated_at": cls._now_text(),
+                "message": "" if results else "行情源未返回有效报价"
+            }
         except Exception as e:
             logger.warning(f"Error fetching batch quotes: {e}")
+            cls._quote_health = {
+                "status": "unavailable",
+                "source": "Tencent Finance",
+                "updated_at": cls._now_text(),
+                "message": "实时行情暂不可用，界面价格可能使用成本价或空值"
+            }
 
         return results
 
@@ -156,6 +193,7 @@ class MarketDataService:
         
         url = f"http://proxy.finance.qq.com/ifzq/appstock/app/fqkline/get?param={prefix}{symbol},day,,,{days},qfq"
         df = pd.DataFrame()
+        kline_source = "Tencent Finance"
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -187,6 +225,7 @@ class MarketDataService:
 
         # Fallback to Eastmoney REST API if Tencent fails
         if df.empty:
+            kline_source = "Eastmoney"
             _, market = cls.get_symbol_prefix_and_market(symbol)
             secid = f"{market}.{symbol}"
             url_em = f"http://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&end=20500101&lmt={days}"
@@ -218,7 +257,15 @@ class MarketDataService:
 
         # Fallback to mock data if all APIs fail
         if df.empty:
+            kline_source = "模拟数据"
             df = cls._generate_mock_kline(symbol, days)
+
+        cls._kline_health = {
+            "status": "mock" if kline_source == "模拟数据" else "live",
+            "source": kline_source,
+            "updated_at": cls._now_text(),
+            "message": "网络行情不可用，当前图表仅用于界面演示，不能作为交易依据" if kline_source == "模拟数据" else ""
+        }
 
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
@@ -378,3 +425,149 @@ class MarketDataService:
             })
             
         return pd.DataFrame(records)
+
+    @classmethod
+    def get_market_macro_context(cls) -> Dict[str, Any]:
+        """
+        Fetch real-time A-Share Market Macro Overview:
+        1. Major Indices (上证指数, 深证成指, 创业板指, 科创50)
+        2. Top Gaining Sectors (热门领涨板块排行)
+        3. Real-time Financial & Market News Headlines (大盘与板块热点资讯)
+        """
+        context = {
+            "indices": [],
+            "hot_sectors": [],
+            "latest_news": [],
+            "meta": {
+                "updated_at": cls._now_text(),
+                "status": "live",
+                "fallback_sections": []
+            }
+        }
+        
+        # 1. Major Indices Quotes (Shanghai, Shenzhen, ChiNext, STAR50)
+        try:
+            url_indices = "http://qt.gtimg.cn/q=s_sh000001,s_sz399001,s_sz399006,s_sh688008"
+            req = urllib.request.Request(url_indices, headers={'User-Agent': 'Mozilla/5.0'})
+            res = urllib.request.urlopen(req, timeout=3).read().decode('gbk', errors='ignore')
+            
+            name_map = {
+                "s_sh000001": "上证指数",
+                "s_sz399001": "深证成指",
+                "s_sz399006": "创业板指",
+                "s_sh688008": "科创50"
+            }
+            
+            for line in res.strip().split(';'):
+                if '~' in line:
+                    parts = line.split('~')
+                    if len(parts) > 5:
+                        raw_code = parts[0].split('=')[0].replace('v_', '').strip()
+                        name = name_map.get(raw_code, parts[1].strip())
+                        price = float(parts[3])
+                        pct = float(parts[5])
+                        context["indices"].append({
+                            "name": name,
+                            "symbol": raw_code.replace('s_', ''),
+                            "price": price,
+                            "pct_chg": f"{pct:+.2f}%",
+                            "pct_num": pct
+                        })
+        except Exception as e:
+            logger.warning(f"Error fetching major indices: {e}")
+
+        if not context["indices"]:
+            context["meta"]["fallback_sections"].append("指数")
+            context["indices"] = [
+                {"name": "上证指数", "symbol": "sh000001", "price": 3050.0, "pct_chg": "+0.15%", "pct_num": 0.15},
+                {"name": "深证成指", "symbol": "sz399001", "price": 9500.0, "pct_chg": "+0.32%", "pct_num": 0.32},
+                {"name": "创业板指", "symbol": "sz399006", "price": 1850.0, "pct_chg": "+0.45%", "pct_num": 0.45},
+                {"name": "科创50", "symbol": "sh688008", "price": 820.0, "pct_chg": "-0.10%", "pct_num": -0.10}
+            ]
+
+        # 2. Industry Sector Heat / Top Gaining Sectors
+        try:
+            url_sec = "http://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=6&po=1&np=1&fields=f12,f14,f3,f62&fid=f3&fs=m:90+t:2+f:!50"
+            req = urllib.request.Request(url_sec, headers={'User-Agent': 'Mozilla/5.0'})
+            res_raw = urllib.request.urlopen(req, timeout=3).read().decode('utf-8', errors='ignore')
+            data = json.loads(res_raw)
+            diff = data.get("data", {}).get("diff", [])
+            for d in diff:
+                sec_name = d.get("f14")
+                pct_val = d.get("f3", 0) / 100.0 if isinstance(d.get("f3"), (int, float)) else 0.0
+                if sec_name and pct_val > -100:
+                    context["hot_sectors"].append({
+                        "name": sec_name,
+                        "pct_chg": f"{pct_val:+.2f}%",
+                        "pct_num": pct_val
+                    })
+        except Exception as e:
+            logger.warning(f"Error fetching hot sectors: {e}")
+
+        if not context["hot_sectors"]:
+            context["meta"]["fallback_sections"].append("板块")
+            context["hot_sectors"] = [
+                {"name": "半导体/芯片", "pct_chg": "+2.50%", "pct_num": 2.50},
+                {"name": "高股息/红利", "pct_chg": "+1.80%", "pct_num": 1.80},
+                {"name": "新能源汽车", "pct_chg": "+1.20%", "pct_num": 1.20}
+            ]
+
+        # 3. Sina Financial Roll News Headlines
+        try:
+            import re
+            url_news = "https://feed.mix.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=6"
+            req = urllib.request.Request(url_news, headers={'User-Agent': 'Mozilla/5.0'})
+            res_raw = urllib.request.urlopen(req, timeout=3).read().decode('utf-8', errors='ignore')
+            data = json.loads(res_raw)
+            items = data.get("result", {}).get("data", []) or []
+            for item in items:
+                t = item.get("title")
+                if t:
+                    clean_t = re.sub(r'<[^>]+>', '', t).strip()
+                    if clean_t and len(clean_t) > 5:
+                        context["latest_news"].append(clean_t)
+        except Exception as e:
+            logger.warning(f"Error fetching financial news: {e}")
+
+        if not context["latest_news"]:
+            context["meta"]["fallback_sections"].append("快讯")
+            context["latest_news"] = [
+                "央行维持流动性合理充裕，多重政策利好提振市场信心",
+                "科技与高股息板块获主力资金持续净流入",
+                "主力资金聚焦核心龙头，多只热门 ETF 获买盘加仓"
+            ]
+
+        if context["meta"]["fallback_sections"]:
+            context["meta"]["status"] = "partial_fallback"
+        return context
+
+    @classmethod
+    def format_macro_prompt_block(cls, context: Dict[str, Any]) -> str:
+        """Format market macro overview into clear Markdown block for LLM Prompts"""
+        indices_list = context.get("indices", [])
+        sectors_list = context.get("hot_sectors", [])
+        news_list = context.get("latest_news", [])
+
+        indices_str = " | ".join([f"**{i['name']}**: {i['price']} ({i['pct_chg']})" for i in indices_list])
+        sectors_str = "、".join([f"**{s['name']}** ({s['pct_chg']})" for s in sectors_list[:6]])
+        news_str = "\n".join([f"- {n}" for n in news_list[:5]])
+        meta = context.get("meta", {})
+        fallback_sections = meta.get("fallback_sections", [])
+        data_quality_note = (
+            f"\n> ⚠️ 数据质量提示：{ '、'.join(fallback_sections) }暂不可用，相关内容为演示回退数据；不得据此给出买卖、仓位或价格建议。\n"
+            if fallback_sections else "\n> 数据时间：" + str(meta.get("updated_at", "未知")) + "。\n"
+        )
+
+        block = f"""## 🌐 【全市场大盘情绪、领涨热点板块与宏观新闻背景】
+
+### 📊 1. 今日大盘主要指数表现：
+{indices_str}
+
+### 🔥 2. 当前主力资金领涨与最热板块：
+{sectors_str}
+
+### 📰 3. 最新财经与市场重大新闻消息面：
+{news_str}
+{data_quality_note}
+"""
+        return block

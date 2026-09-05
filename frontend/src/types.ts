@@ -21,6 +21,8 @@ export interface PositionItem {
   macd_status: string;
   support_price?: number;
   resistance_price?: number;
+  quote_status?: 'live' | 'unavailable' | string;
+  quote_updated_at?: string;
 }
 
 
@@ -38,6 +40,8 @@ export interface WatchlistItem {
   macd_status: string;
   support_price?: number;
   resistance_price?: number;
+  quote_status?: 'live' | 'unavailable' | string;
+  quote_updated_at?: string;
 }
 
 export interface CategoryStat {
@@ -103,4 +107,3 @@ export interface AgentMemoryItem {
   created_at: string;
   updated_at: string;
 }
-

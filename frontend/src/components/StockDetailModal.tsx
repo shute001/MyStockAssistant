@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
-import { X, TrendingUp, Cpu } from 'lucide-react';
+import { X, TrendingUp, Cpu, AlertTriangle } from 'lucide-react';
 import { KLineRecord } from '../types';
 import axios from 'axios';
 
@@ -18,6 +18,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
   const [klineData, setKlineData] = useState<KLineRecord[]>([]);
   const [stockName, setStockName] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
+  const [dataHealth, setDataHealth] = useState({ status: 'unknown', source: '', updatedAt: '' });
 
   useEffect(() => {
     const fetchKline = async () => {
@@ -29,6 +30,11 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
         ]);
         const records: KLineRecord[] = klineRes.data || [];
         setKlineData(records);
+        setDataHealth({
+          status: klineRes.headers['x-market-data-status'] || 'unknown',
+          source: klineRes.headers['x-market-data-source'] || '',
+          updatedAt: klineRes.headers['x-market-data-updated-at'] || ''
+        });
 
         // Resolve Chinese name
         const match = watchRes.data.find((w: any) => w.symbol === symbol);
@@ -139,7 +145,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-4xl w-full p-6 space-y-4 shadow-2xl">
+      <div className="surface-card rounded-2xl max-w-4xl w-full p-4 sm:p-6 space-y-4 shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center space-x-3">
@@ -147,6 +153,11 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
               <TrendingUp className="w-5 h-5 text-indigo-400" />
               <span>{stockName ? `${stockName} (${symbol})` : `行情看板 (${symbol})`}</span>
             </h3>
+            {dataHealth.status === 'mock' && (
+              <span className="hidden sm:flex items-center gap-1 rounded-full border border-amber-800/60 bg-amber-950/60 px-2 py-1 text-[10px] font-medium text-amber-200">
+                <AlertTriangle className="w-3 h-3" /> 演示 K 线
+              </span>
+            )}
             {latest && (
               <span className={`text-base font-mono font-bold ${latest.pct_chg >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>
                 ¥{latest.close?.toFixed(digits)} ({latest.pct_chg >= 0 ? '+' : ''}{latest.pct_chg?.toFixed(2)}%)
@@ -170,16 +181,23 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
           </div>
         </div>
 
+        {dataHealth.status === 'mock' && (
+          <div className="rounded-xl border border-amber-800/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+            当前无法连接真实 K 线源，图表为模拟数据，仅用于演示，不应作为交易决策依据。
+          </div>
+        )}
+
         {/* Chart Area */}
         {isLoading ? (
           <div className="h-96 flex items-center justify-center text-slate-500">
             行情与 K 线数据加载中...
           </div>
         ) : (
-          <div className="h-[430px] w-full">
+          <div className="h-[340px] sm:h-[430px] w-full">
             <ReactECharts option={option} style={{ height: '100%', width: '100%' }} />
           </div>
         )}
+        {dataHealth.updatedAt && <p className="text-right text-[10px] text-slate-500">数据源：{dataHealth.source} · 更新于 {dataHealth.updatedAt}</p>}
       </div>
     </div>
   );

@@ -1,4 +1,7 @@
 import math
+import io
+import re
+import pandas as pd
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
@@ -47,6 +50,63 @@ class UpdateReasonPayload(BaseModel):
 
 class ClipboardParsePayload(BaseModel):
     text: str
+
+
+def calculate_trade_ledger(records: List[TradeRecord]) -> dict:
+    """Calculate cash flow and FIFO realised P&L from the filtered trade ledger.
+
+    This is intentionally derived from immutable transaction records, not the
+    current position table, so it remains useful for cleared positions as well.
+    Unmatched sells are reported instead of inventing a cost basis.
+    """
+    lots: dict[str, list[list[float]]] = {}
+    realised_pnl = 0.0
+    unmatched_sell_volume = 0
+    total_fees = 0.0
+    net_cash_flow = 0.0
+
+    for trade in records:
+        volume = max(int(trade.volume or 0), 0)
+        fee = float(trade.fee or 0.0)
+        amount = float(trade.amount or 0.0)
+        total_fees += fee
+        symbol_lots = lots.setdefault(trade.symbol, [])
+
+        if trade.trade_type == "BUY":
+            unit_cost = (amount + fee) / volume if volume else 0.0
+            symbol_lots.append([float(volume), unit_cost])
+            net_cash_flow -= amount + fee
+            continue
+
+        net_cash_flow += amount - fee
+        remaining = volume
+        matched_cost = 0.0
+        while remaining > 0 and symbol_lots:
+            lot_volume, unit_cost = symbol_lots[0]
+            matched = min(remaining, int(lot_volume))
+            matched_cost += matched * unit_cost
+            lot_volume -= matched
+            remaining -= matched
+            if lot_volume <= 0:
+                symbol_lots.pop(0)
+            else:
+                symbol_lots[0][0] = lot_volume
+
+        matched_volume = volume - remaining
+        if remaining:
+            unmatched_sell_volume += remaining
+        # Only recognise P&L for the matched quantity. A sell without an
+        # imported cost basis is visible to the user, but never treated as
+        # zero-cost profit.
+        matched_proceeds = (amount - fee) * matched_volume / volume if volume else 0.0
+        realised_pnl += matched_proceeds - matched_cost
+
+    return {
+        "realized_pnl": round(realised_pnl, 2),
+        "net_cash_flow": round(net_cash_flow, 2),
+        "total_fees": round(total_fees, 2),
+        "unmatched_sell_volume": unmatched_sell_volume
+    }
 
 
 @router.get("")
@@ -106,6 +166,7 @@ def get_trade_records(
 
     sell_count = sell_stats[0] if sell_stats else 0
     total_sell_amount = float(sell_stats[1]) if sell_stats else 0.0
+    ledger = calculate_trade_ledger(query.order_by(TradeRecord.trade_date.asc(), TradeRecord.id.asc()).all())
 
     # Determine pagination parameters
     effective_page_size = limit if (limit and limit > 0) else page_size
@@ -137,7 +198,8 @@ def get_trade_records(
             "buy_count": buy_count,
             "sell_count": sell_count,
             "total_buy_amount": round(total_buy_amount, 2),
-            "total_sell_amount": round(total_sell_amount, 2)
+            "total_sell_amount": round(total_sell_amount, 2),
+            **ledger
         },
         "pagination": {
             "page": page,
@@ -410,67 +472,185 @@ def parse_trade_clipboard(payload: ClipboardParsePayload):
 
 @router.post("/upload-file")
 async def upload_trade_file(file: UploadFile = File(...)):
-    """Parse exported Flush (同花顺) trade records file (.xls, .csv, .txt)"""
+    """Parse exported Flush (同花顺) trade records file (.xls, .csv, .txt, .xlsx)"""
     content = await file.read()
-    items = []
-    
-    text = ""
-    for enc in ["gb18030", "gbk", "utf-8-sig", "utf-8"]:
+    raw_text = ""
+    for enc in ["gb18030", "gbk", "utf-8-sig", "utf-8", "cp936"]:
         try:
-            text = content.decode(enc)
-            if "成交" in text or "证券代码" in text or "买入" in text or "卖出" in text:
+            raw_text = content.decode(enc)
+            if raw_text:
                 break
         except Exception:
             continue
 
-    if text:
-        lines = text.strip().split("\n")
-        header_line = lines[0]
-        delimiter = "\t" if "\t" in header_line else ("," if "," in header_line else None)
+    df = None
+    filename_lower = file.filename.lower() if file.filename else ""
 
-        for line in lines[1:]:
-            parts = [p.strip() for p in (line.split(delimiter) if delimiter else line.split())]
-            if len(parts) < 6:
-                continue
-            
+    # 1. Try HTML table parsing (Flush .xls files are often HTML <table> tables!)
+    if "<table" in raw_text.lower():
+        try:
+            dfs = pd.read_html(io.StringIO(raw_text))
+            if dfs:
+                df = dfs[0]
+        except Exception:
+            pass
+
+    # 2. Try Excel file reading if pd.read_html didn't produce df
+    if (df is None or df.empty) and (filename_lower.endswith(".xlsx") or filename_lower.endswith(".xls")):
+        try:
+            df = pd.read_excel(io.BytesIO(content))
+        except Exception:
+            pass
+
+    # 3. Try CSV / TSV text parsing with Pandas
+    if df is None or df.empty:
+        for enc in ["gbk", "gb18030", "utf-8-sig", "utf-8"]:
             try:
-                # Expecting format: [Date, Time, Code, Name, Action, Volume, Price, Amount, ...]
-                d_raw = parts[0]
-                t_raw = parts[1] if len(parts) > 1 else "00:00:00"
-                sym_raw = parts[2]
-                name_raw = parts[3]
-                action_raw = parts[4]
-                vol_raw = parts[5]
-                price_raw = parts[6] if len(parts) > 6 else "0.0"
+                df = pd.read_csv(io.BytesIO(content), encoding=enc, sep=None, engine="python")
+                if df is not None and not df.empty:
+                    break
+            except Exception:
+                continue
 
-                if not sym_raw.isdigit() or len(sym_raw) > 6:
+    items = []
+
+    # 4. Dynamic column detection & DataFrame row extraction
+    if df is not None and not df.empty:
+        header_row_idx = None
+        for idx in range(min(15, len(df))):
+            row_vals = [str(val).strip() for val in df.iloc[idx].values if pd.notna(val)]
+            if any("代码" in v or "Symbol" in v or ("证券" in v and "代码" in v) for v in row_vals):
+                header_row_idx = idx
+                break
+
+        if header_row_idx is not None:
+            df.columns = [str(x).strip() for x in df.iloc[header_row_idx].values]
+            df = df.iloc[header_row_idx + 1:].reset_index(drop=True)
+
+        columns = [str(col).strip() for col in df.columns]
+        df.columns = columns
+
+        date_col = next((col for col in columns if "日期" in col or "时间" in col or "Date" in col or "Time" in col), None)
+        time_col = next((col for col in columns if "时间" in col and col != date_col), None)
+        symbol_col = next((col for col in columns if "代码" in col or "Symbol" in col), None)
+        name_col = next((col for col in columns if "名称" in col or "Name" in col), None)
+        action_col = next((col for col in columns if "操作" in col or "买卖" in col or "标志" in col or "方向" in col or "类别" in col or "Action" in col), None)
+        vol_col = next((col for col in columns if "数量" in col or "股数" in col or "成交量" in col or "Volume" in col), None)
+        price_col = next((col for col in columns if "均价" in col or "价格" in col or "成交价" in col or "单价" in col or "Price" in col), None)
+        fee_col = next((col for col in columns if "费用" in col or "佣金" in col or "手续费" in col or "Fee" in col), None)
+
+        if symbol_col:
+            for _, row in df.iterrows():
+                symbol_raw = str(row[symbol_col]).strip().split(".")[0]
+                if not symbol_raw.isdigit() or len(symbol_raw) > 6:
                     continue
-                symbol = sym_raw.zfill(6)
-                stock_name = name_raw if name_raw else MarketDataService.get_stock_name(symbol)
+                symbol = symbol_raw.zfill(6)
+                name = str(row[name_col]).strip() if name_col and pd.notna(row[name_col]) else MarketDataService.get_stock_name(symbol)
 
+                action_raw = str(row[action_col]).strip() if action_col and pd.notna(row[action_col]) else "买入"
                 trade_type = "SELL" if ("卖" in action_raw or "SELL" in action_raw.upper()) else "BUY"
-                volume = int(float(vol_raw.replace(",", "")))
-                price = float(price_raw.replace(",", ""))
 
-                if len(d_raw) == 8 and d_raw.isdigit():
-                    d_fmt = f"{d_raw[:4]}-{d_raw[4:6]}-{d_raw[6:8]}"
+                volume = 0
+                if vol_col and pd.notna(row[vol_col]):
+                    try:
+                        volume = int(abs(float(str(row[vol_col]).replace(",", ""))))
+                    except ValueError:
+                        volume = 0
+
+                if volume <= 0:
+                    continue
+
+                price = 0.0
+                if price_col and pd.notna(row[price_col]):
+                    try:
+                        price = float(str(row[price_col]).replace(",", ""))
+                    except ValueError:
+                        price = 0.0
+
+                fee = 0.0
+                if fee_col and pd.notna(row[fee_col]):
+                    try:
+                        fee = abs(float(str(row[fee_col]).replace(",", "")))
+                    except ValueError:
+                        fee = 0.0
+
+                d_str = str(row[date_col]).strip() if date_col and pd.notna(row[date_col]) else ""
+                t_str = str(row[time_col]).strip() if time_col and pd.notna(row[time_col]) else ""
+                
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                if d_str and t_str:
+                    full_dt = f"{d_str} {t_str}"
+                elif d_str:
+                    if len(d_str) == 8 and d_str.isdigit():
+                        full_dt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:8]}"
+                    elif ":" in d_str and len(d_str) <= 8:
+                        full_dt = f"{today_str} {d_str}"
+                    else:
+                        full_dt = d_str
                 else:
-                    d_fmt = d_raw
-
-                full_date_str = f"{d_fmt} {t_raw}".strip()
+                    full_dt = today_str
 
                 items.append({
                     "symbol": symbol,
-                    "name": stock_name,
+                    "name": name,
                     "trade_type": trade_type,
                     "price": price,
                     "volume": volume,
                     "amount": round(price * volume, 2),
-                    "trade_date": full_date_str,
+                    "fee": fee,
+                    "trade_date": full_dt,
                     "strategy_reason": f"同花顺交割单导出"
                 })
-            except Exception:
+
+    # 5. Universal Regex Fallback for text files if DataFrame yielded 0 items
+    if not items and raw_text:
+        lines = raw_text.strip().split("\n")
+        trade_regex = re.compile(
+            r'(\d{4}[-/.]\d{2}[-/.]\d{2}|\d{8}|\d{2}:\d{2}:\d{2})?\s*(买入|卖出|证券买入|证券卖出|BUY|SELL)?\s*([01345689]\d{5})\s+([\u4e00-\u9fa5A-Za-z0-9\*]+)\s+([\d\.,]+)\s+([\d\.,]+)'
+        )
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        for line in lines:
+            line_str = line.strip()
+            if not line_str:
                 continue
 
-    return {"status": "success", "count": len(items), "items": items}
+            match = trade_regex.search(line_str)
+            if match:
+                raw_dt = match.group(1) or today_str
+                if ":" in raw_dt and len(raw_dt) <= 8:
+                    full_dt = f"{today_str} {raw_dt}"
+                elif len(raw_dt) == 8 and raw_dt.isdigit():
+                    full_dt = f"{raw_dt[:4]}-{raw_dt[4:6]}-{raw_dt[6:8]}"
+                else:
+                    full_dt = raw_dt
 
+                raw_action = match.group(2) or "买入"
+                symbol = match.group(3).zfill(6)
+                name = match.group(4).strip()
+                raw_price = match.group(5)
+                raw_vol = match.group(6)
+
+                trade_type = "SELL" if ("卖" in raw_action or "SELL" in raw_action.upper()) else "BUY"
+                try:
+                    price = float(raw_price.replace(",", ""))
+                    volume = int(abs(float(raw_vol.replace(",", ""))))
+                except ValueError:
+                    continue
+
+                if volume <= 0:
+                    continue
+
+                items.append({
+                    "symbol": symbol,
+                    "name": name,
+                    "trade_type": trade_type,
+                    "price": price,
+                    "volume": volume,
+                    "amount": round(price * volume, 2),
+                    "fee": 0.0,
+                    "trade_date": full_dt,
+                    "strategy_reason": f"同花顺交割单导入"
+                })
+
+    return {"status": "success", "count": len(items), "items": items}

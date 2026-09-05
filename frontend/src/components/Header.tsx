@@ -20,10 +20,11 @@ export const Header: React.FC<HeaderProps> = ({
   isRefreshing
 }) => {
   return (
-    <header className="sticky top-0 z-30 bg-slate-900/90 backdrop-blur border-b border-slate-800 px-6 py-3.5 flex items-center justify-between">
+    <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/75 px-4 py-3 backdrop-blur-xl sm:px-6">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-5 gap-y-3">
       {/* Brand & Logo */}
-      <div className="flex items-center space-x-3">
-        <div className="bg-gradient-to-tr from-indigo-600 to-violet-500 p-2 rounded-xl text-white shadow-lg shadow-indigo-500/20">
+      <div className="flex items-center space-x-3 shrink-0">
+        <div className="bg-gradient-to-tr from-indigo-600 to-violet-500 p-2 rounded-xl text-white shadow-lg shadow-indigo-500/25 ring-1 ring-white/10">
           <TrendingUp className="w-6 h-6" />
         </div>
         <div>
@@ -33,10 +34,10 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Main Navigation Tabs */}
-      <nav className="flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+      <nav className="order-3 flex w-full items-center gap-1 overflow-x-auto rounded-xl border border-slate-800/90 bg-slate-900/75 p-1 sm:order-none sm:w-auto">
         <button
           onClick={() => setActiveTab('dashboard')}
-          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+          className={`flex shrink-0 items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
             activeTab === 'dashboard'
               ? 'bg-indigo-600 text-white shadow-md'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -47,7 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
         <button
           onClick={() => setActiveTab('portfolio')}
-          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+          className={`flex shrink-0 items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
             activeTab === 'portfolio'
               ? 'bg-indigo-600 text-white shadow-md'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -58,7 +59,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
         <button
           onClick={() => setActiveTab('ai')}
-          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+          className={`flex shrink-0 items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
             activeTab === 'ai'
               ? 'bg-indigo-600 text-white shadow-md'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -69,7 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
         <button
           onClick={() => setActiveTab('trade_review')}
-          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+          className={`flex shrink-0 items-center space-x-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
             activeTab === 'trade_review'
               ? 'bg-purple-600 text-white shadow-md'
               : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -82,10 +83,10 @@ export const Header: React.FC<HeaderProps> = ({
 
 
       {/* LLM Status Badge & Actions */}
-      <div className="flex items-center space-x-3">
+      <div className="flex items-center space-x-2 sm:space-x-3">
         <button
           onClick={() => setActiveTab('portfolio')}
-          className="px-3.5 py-1.5 bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-600/60 text-indigo-200 text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-all shadow-md hover:shadow-indigo-600/20"
+          className="hidden lg:flex px-3.5 py-1.5 bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-600/60 text-indigo-200 text-xs font-semibold rounded-xl items-center space-x-1.5 transition-all shadow-md hover:shadow-indigo-600/20"
         >
           <TrendingUp className="w-3.5 h-3.5 text-indigo-400" />
           <span>📥 导入同花顺持仓/交割单</span>
@@ -104,7 +105,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Model Badge */}
         <div
           onClick={onOpenSettings}
-          className="cursor-pointer flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
+          className="cursor-pointer hidden xl:flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 border border-slate-700 transition-colors"
         >
           <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
           <span className="text-xs font-semibold text-indigo-300 uppercase">
@@ -119,6 +120,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Settings className="w-4 h-4" />
           <span>设置 API</span>
         </button>
+      </div>
       </div>
     </header>
   );

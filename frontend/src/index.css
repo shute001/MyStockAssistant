@@ -3,7 +3,12 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    color-scheme: dark;
+  }
+
   html {
+    min-width: 320px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -13,6 +18,8 @@
   body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
     @apply bg-slate-950 text-slate-100 antialiased tracking-normal;
+    min-height: 100vh;
+    overflow-x: hidden;
   }
 
   /* Monospaced Stock Prices & Numbers with Tabular Alignment */
@@ -21,6 +28,63 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.02em;
   }
+}
+
+@layer components {
+  .app-shell {
+    min-height: 100vh;
+    position: relative;
+    isolation: isolate;
+    background:
+      radial-gradient(900px 460px at 12% -10%, rgba(79, 70, 229, 0.18), transparent 60%),
+      radial-gradient(760px 420px at 95% 8%, rgba(8, 145, 178, 0.10), transparent 58%),
+      #020617;
+  }
+
+  .app-shell::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.26;
+    background-image: linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: linear-gradient(to bottom, black, transparent 80%);
+  }
+
+  .app-content {
+    position: relative;
+  }
+
+  .surface-card {
+    @apply border border-slate-800/80 bg-slate-900/85 shadow-xl shadow-slate-950/20;
+    background-image: linear-gradient(135deg, rgba(30, 41, 59, 0.30), transparent 42%);
+  }
+
+  .interactive-card {
+    @apply transition-all duration-200;
+  }
+
+  .interactive-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(99, 102, 241, 0.38);
+    box-shadow: 0 16px 30px rgba(2, 6, 23, 0.26);
+  }
+}
+
+button, input, select, textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid #818cf8;
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.42);
+  color: #f8fafc;
 }
 
 /* High Contrast & Crisp Typography Enhancements */
@@ -45,4 +109,10 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+
+@media (max-width: 767px) {
+  .app-shell::before {
+    background-size: 24px 24px;
+  }
 }

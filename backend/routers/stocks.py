@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
@@ -104,6 +104,9 @@ def get_positions(
 
     symbols = [pos.symbol for pos in positions]
     batch_quotes = MarketDataService.get_batch_realtime_quotes(symbols)
+    stocks_by_symbol = {stock.symbol: stock for stock in db.query(Stock).filter(Stock.symbol.in_(symbols)).all()}
+    stocks_changed = False
+    quote_health = MarketDataService.get_data_health()["quote"]
     result = []
 
 
@@ -115,17 +118,18 @@ def get_positions(
         total_portfolio_market_value += cp * pos.current_volume
 
     for pos in positions:
-        stock = db.query(Stock).filter(Stock.symbol == pos.symbol).first()
+        stock = stocks_by_symbol.get(pos.symbol)
         quote = batch_quotes.get(pos.symbol, {})
         real_name = quote.get("name") or (stock.name if stock and not stock.name.startswith("股票") else MarketDataService.get_stock_name(pos.symbol))
 
         if not stock:
             stock = Stock(symbol=pos.symbol, name=real_name)
             db.add(stock)
-            db.commit()
+            stocks_by_symbol[pos.symbol] = stock
+            stocks_changed = True
         elif stock.name.startswith("股票") or stock.name != real_name:
             stock.name = real_name
-            db.commit()
+            stocks_changed = True
 
         current_price = quote.get("current_price") or pos.cost_price
         pct_chg = quote.get("pct_chg", "0.00%")
@@ -169,8 +173,12 @@ def get_positions(
             "ma_trend": "多头震荡",
             "macd_status": "看多" if pct_num >= 0 else "回调",
             "support_price": round(current_price * 0.95, 2),
-            "resistance_price": round(current_price * 1.05, 2)
+            "resistance_price": round(current_price * 1.05, 2),
+            "quote_status": "live" if quote else "unavailable",
+            "quote_updated_at": quote_health.get("updated_at")
         })
+    if stocks_changed:
+        db.commit()
     return result
 
 
@@ -227,20 +235,24 @@ def get_watchlists(db: Session = Depends(get_db)):
 
     symbols = [w.symbol for w in watchlists]
     batch_quotes = MarketDataService.get_batch_realtime_quotes(symbols)
+    stocks_by_symbol = {stock.symbol: stock for stock in db.query(Stock).filter(Stock.symbol.in_(symbols)).all()}
+    stocks_changed = False
+    quote_health = MarketDataService.get_data_health()["quote"]
     result = []
 
     for w in watchlists:
-        stock = db.query(Stock).filter(Stock.symbol == w.symbol).first()
+        stock = stocks_by_symbol.get(w.symbol)
         quote = batch_quotes.get(w.symbol, {})
         real_name = quote.get("name") or (stock.name if stock and not stock.name.startswith("股票") else MarketDataService.get_stock_name(w.symbol))
 
         if not stock:
             stock = Stock(symbol=w.symbol, name=real_name)
             db.add(stock)
-            db.commit()
+            stocks_by_symbol[w.symbol] = stock
+            stocks_changed = True
         elif stock.name.startswith("股票") or stock.name != real_name:
             stock.name = real_name
-            db.commit()
+            stocks_changed = True
 
         current_price = quote.get("current_price") or 0.0
         pct_chg = quote.get("pct_chg", "0.00%")
@@ -258,8 +270,12 @@ def get_watchlists(db: Session = Depends(get_db)):
             "ma_trend": "关注支撑",
             "macd_status": "看多" if quote.get("pct_chg_num", 0) >= 0 else "调整",
             "support_price": round(current_price * 0.95, 2) if current_price > 0 else None,
-            "resistance_price": round(current_price * 1.05, 2) if current_price > 0 else None
+            "resistance_price": round(current_price * 1.05, 2) if current_price > 0 else None,
+            "quote_status": "live" if quote else "unavailable",
+            "quote_updated_at": quote_health.get("updated_at")
         })
+    if stocks_changed:
+        db.commit()
     return result
 
 @router.post("/watchlists")
@@ -407,7 +423,21 @@ def delete_watchlist(w_id: int, db: Session = Depends(get_db)):
     return {"status": "success"}
 
 @router.get("/{symbol}/kline")
-def get_kline(symbol: str, days: int = Query(60, ge=10, le=250)):
+def get_kline(symbol: str, response: Response, days: int = Query(60, ge=10, le=250)):
     """Get K-line candlestick and technical indicator dataset for chart display"""
     df = MarketDataService.get_stock_kline(symbol, days=days)
+    health = MarketDataService.get_data_health()["kline"]
+    response.headers["X-Market-Data-Status"] = health.get("status", "unknown")
+    response.headers["X-Market-Data-Source"] = health.get("source") or "unknown"
+    response.headers["X-Market-Data-Updated-At"] = health.get("updated_at") or ""
     return df.to_dict(orient="records")
+
+@router.get("/market-health")
+def get_market_health():
+    """Expose price/K-line source metadata without exposing any credentials."""
+    return MarketDataService.get_data_health()
+
+@router.get("/market-macro")
+def get_market_macro():
+    """Fetch real-time A-Share Major Indices, Hot Sectors and Live News Headlines"""
+    return MarketDataService.get_market_macro_context()

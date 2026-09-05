@@ -22,8 +22,9 @@ class PortfolioAnalyzeRequest(BaseModel):
 
 @router.post("/analyze/portfolio/stream")
 async def analyze_portfolio_stream(req: Optional[PortfolioAnalyzeRequest] = None, db: Session = Depends(get_db)):
-    """Stream AI analysis for portfolio / specific sectors"""
+    """Stream AI analysis for portfolio / specific sectors with market macro & news context"""
     scope = req.scope if (req and req.scope) else "ALL"
+    macro_context = MarketDataService.get_market_macro_context()
     
     if scope.startswith("SINGLE:"):
         raw_sym = scope.split("SINGLE:", 1)[1].strip()
@@ -38,7 +39,7 @@ async def analyze_portfolio_stream(req: Optional[PortfolioAnalyzeRequest] = None
             indicators["current_volume"] = pos.current_volume
             
         scope_label = f"单股【{name} ({symbol})】"
-        prompt = MultiLLMEngine.build_single_stock_prompt(symbol, name, indicators)
+        prompt = MultiLLMEngine.build_single_stock_prompt(symbol, name, indicators, macro_context=macro_context)
         item_count_label = f"单股 {symbol}"
     else:
         positions = []
@@ -78,11 +79,20 @@ async def analyze_portfolio_stream(req: Optional[PortfolioAnalyzeRequest] = None
             indicators["target_buy_price"] = w.target_buy_price
             watchlist_payload.append(indicators)
 
-        prompt = MultiLLMEngine.build_portfolio_prompt(portfolio_payload, watchlist_payload, scope_label=scope_label)
+        prompt = MultiLLMEngine.build_portfolio_prompt(portfolio_payload, watchlist_payload, scope_label=scope_label, macro_context=macro_context)
         item_count_label = f"{len(portfolio_payload)}持仓, {len(watchlist_payload)}自选/板块"
 
     async def event_generator():
-        report_text = ""
+        fallback_sections = macro_context.get("meta", {}).get("fallback_sections", [])
+        quality_preamble = ""
+        if fallback_sections:
+            quality_preamble = (
+                f"> ⚠️ **数据质量提示**：{'、'.join(fallback_sections)}暂不可用，"
+                "相应内容为演示回退数据。本报告不会基于该部分给出具体买卖、仓位或价格建议。\n\n"
+            )
+        report_text = quality_preamble
+        if quality_preamble:
+            yield quality_preamble
         async for chunk in MultiLLMEngine.generate_analysis_stream(db, prompt):
             report_text += chunk
             yield chunk
@@ -103,21 +113,14 @@ async def analyze_portfolio_stream(req: Optional[PortfolioAnalyzeRequest] = None
 
 @router.post("/analyze/single/stream")
 async def analyze_single_stock_stream(req: SingleStockAnalyzeRequest, db: Session = Depends(get_db)):
-    """Stream AI diagnosis for a single stock"""
+    """Stream AI diagnosis for a single stock with market macro & news context"""
     symbol = MarketDataService.format_symbol(req.symbol)
     stock = db.query(Stock).filter(Stock.symbol == symbol).first()
     name = stock.name if stock else symbol
     indicators = MarketDataService.get_stock_indicators_summary(symbol, name)
+    macro_context = MarketDataService.get_market_macro_context()
 
-    prompt = f"""请对 A 股个股【{name} ({symbol})】进行深度个股诊断。
-技术与基本面行情数据如下：
-{json.dumps(indicators, ensure_ascii=False, indent=2)}
-
-请输出：
-1. 【技术面与指标态势】：结合均线系统、MACD、KDJ。
-2. 【关键支撑位与阻力位】：结合当前价格（{indicators.get('current_price')}元）分析支撑位（{indicators.get('support_price')}元）与压力位（{indicators.get('resistance_price')}元）。
-3. 【博弈与买卖策略建议】：短线与中线操盘纪律。
-"""
+    prompt = MultiLLMEngine.build_single_stock_prompt(symbol, name, indicators, macro_context=macro_context)
     return StreamingResponse(MultiLLMEngine.generate_analysis_stream(db, prompt), media_type="text/event-stream")
 
 @router.get("/reports")
@@ -265,7 +268,8 @@ async def review_trades_agent_stream(db: Session = Depends(get_db)):
             "strategy_tag": p.strategy_tag
         })
 
-    prompt = MultiLLMEngine.build_trade_review_prompt(db, trade_payload, pos_payload)
+    macro_context = MarketDataService.get_market_macro_context()
+    prompt = MultiLLMEngine.build_trade_review_prompt(db, trade_payload, pos_payload, macro_context=macro_context)
 
     async def event_generator():
         report_text = ""
@@ -340,7 +344,8 @@ async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
         watchlist_items.append(indicators)
 
     user_rules_text = AgentMemoryService.format_memories_for_prompt(db)
-    prompt = MultiLLMEngine.build_stock_screener_prompt(watchlist_items, user_rules_text)
+    macro_context = MarketDataService.get_market_macro_context()
+    prompt = MultiLLMEngine.build_stock_screener_prompt(watchlist_items, user_rules_text, macro_context=macro_context)
 
     async def event_generator():
         report_text = ""
@@ -367,5 +372,4 @@ async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
         AgentMemoryService.auto_extract_and_evolve(db, report_text, source_label="选股 Agent 每日推选")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
-
 

@@ -9,12 +9,16 @@ interface AIAnalysisReportProps {
   activeLLM?: LLMConfigItem;
   llmConfigs: LLMConfigItem[];
   onSwitchModel: (provider: string) => void;
+  initialScope?: string;
+  autoStartKey?: number;
 }
 
 export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
   activeLLM,
   llmConfigs,
-  onSwitchModel
+  onSwitchModel,
+  initialScope,
+  autoStartKey
 }) => {
   const [streamContent, setStreamContent] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
@@ -22,16 +26,33 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
   const [selectedHistoryReport, setSelectedHistoryReport] = useState<AnalysisReportItem | null>(null);
 
   // Diagnosis Scope State
-  const [diagnosisScope, setDiagnosisScope] = useState<string>('ALL');
+  const [diagnosisScope, setDiagnosisScope] = useState<string>(initialScope || 'ALL');
   const [categories, setCategories] = useState<{ name: string; count: number }[]>([]);
   const [stockList, setStockList] = useState<{ symbol: string; name: string }[]>([]);
-  const [customSymbolInput, setCustomSymbolInput] = useState<string>('');
+  const [customSymbolInput, setCustomSymbolInput] = useState<string>(
+    initialScope?.startsWith('SINGLE:') ? initialScope.replace('SINGLE:', '') : ''
+  );
 
   useEffect(() => {
     fetchHistoryReports();
     fetchCategories();
     fetchStocks();
   }, []);
+
+  useEffect(() => {
+    if (initialScope) {
+      setDiagnosisScope(initialScope);
+      if (initialScope.startsWith('SINGLE:')) {
+        setCustomSymbolInput(initialScope.replace('SINGLE:', ''));
+      }
+    }
+  }, [initialScope]);
+
+  useEffect(() => {
+    if (autoStartKey && autoStartKey > 0 && initialScope) {
+      handleStartFullAnalysis(initialScope);
+    }
+  }, [autoStartKey]);
 
   const fetchCategories = async () => {
     try {
@@ -68,7 +89,8 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
     }
   };
 
-  const handleStartFullAnalysis = async () => {
+  const handleStartFullAnalysis = async (overrideScope?: string) => {
+    const scopeToUse = overrideScope || diagnosisScope;
     setIsGenerating(true);
     setStreamContent('');
     setSelectedHistoryReport(null);
@@ -77,7 +99,7 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
       const response = await fetch('/api/v1/ai/analyze/portfolio/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope: diagnosisScope })
+        body: JSON.stringify({ scope: scopeToUse })
       });
 
       if (!response.body) return;
@@ -117,7 +139,7 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
       {/* Sidebar: Scope Filter, Model Switcher & Report History (1 col) */}
       <div className="space-y-6">
         {/* Scope Selector & Generator Card */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-lg">
+        <div className="surface-card rounded-2xl p-5 space-y-4">
           <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
             <Filter className="w-4 h-4 text-indigo-400" />
             AI 诊断目标范围筛选
@@ -190,15 +212,16 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
                 <label className="block text-[11px] font-semibold text-slate-400">📌 单股诊断（输入代码或选择股票）：</label>
 
                 <select
-                  value={diagnosisScope.startsWith('SINGLE:') && !customSymbolInput ? diagnosisScope : ''}
+                  value={diagnosisScope.startsWith('SINGLE:') ? diagnosisScope : ''}
                   onChange={(e) => {
                     if (e.target.value) {
                       setDiagnosisScope(e.target.value);
-                      setCustomSymbolInput('');
+                      const sym = e.target.value.replace('SINGLE:', '');
+                      setCustomSymbolInput(sym);
                     }
                   }}
                   className={`w-full bg-slate-950 border text-xs rounded-xl px-3 py-2 focus:outline-none cursor-pointer transition-all ${
-                    diagnosisScope.startsWith('SINGLE:') && !customSymbolInput
+                    diagnosisScope.startsWith('SINGLE:')
                       ? 'border-indigo-500 text-indigo-200 font-semibold'
                       : 'border-slate-800 text-slate-300'
                   }`}
@@ -240,7 +263,7 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
           </div>
 
           <button
-            onClick={handleStartFullAnalysis}
+            onClick={() => handleStartFullAnalysis()}
             disabled={isGenerating}
             className="w-full py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center space-x-2"
           >
@@ -259,7 +282,7 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
         </div>
 
         {/* Model Switcher Card */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+        <div className="surface-card rounded-2xl p-5 space-y-3">
           <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
             <Cpu className="w-4 h-4 text-indigo-400" />
             切换诊断大模型引擎
@@ -290,7 +313,7 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
         </div>
 
         {/* History Reports */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 shadow-lg">
+        <div className="surface-card rounded-2xl p-5 space-y-3">
           <h3 className="font-bold text-sm text-slate-200 flex items-center justify-between">
             <span className="flex items-center gap-2">
               <History className="w-4 h-4 text-amber-400" />
@@ -331,9 +354,9 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
       </div>
 
       {/* Main Report View Panel (3 cols) */}
-      <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col shadow-xl overflow-hidden h-[750px]">
+      <div className="surface-card lg:col-span-3 rounded-2xl flex flex-col overflow-hidden h-[620px] sm:h-[700px] xl:h-[750px]">
         {/* Report Header */}
-        <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/60 flex items-center justify-between flex-shrink-0">
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-800 bg-slate-950/60 flex items-center justify-between flex-shrink-0 gap-3">
           <div className="flex items-center space-x-3">
             <div className="w-8 h-8 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center">
               <Sparkles className="w-4 h-4 text-indigo-400" />
@@ -347,8 +370,8 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
                   </span>
                 )}
               </h2>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                结合实时行情、技术指标（MA/MACD/KDJ/支撑压力）与量化模型全维度剖析
+              <p className="text-[11px] text-indigo-300/90 mt-0.5 flex items-center gap-1.5">
+                <span>🌐 已融合大盘三大指数情绪、主力资金热点板块及最新财经新闻，全维度深度量化诊断</span>
               </p>
             </div>
           </div>
@@ -364,7 +387,7 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
         </div>
 
         {/* Report Body / Markdown Renderer - Spacious canvas, direct flow, no ugly inner boxes */}
-        <div className="flex-1 p-6 sm:p-8 overflow-y-auto font-sans leading-relaxed text-slate-200 selection:bg-indigo-900 selection:text-indigo-100">
+        <div className="flex-1 p-4 sm:p-8 overflow-y-auto font-sans leading-relaxed text-slate-200 selection:bg-indigo-900 selection:text-indigo-100">
           {!displayedContent ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3 py-24">
               <div className="w-16 h-16 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center shadow-inner">
@@ -378,44 +401,48 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
                 remarkPlugins={[remarkGfm]}
                 components={{
                   h1: ({ children }) => (
-                    <h1 className="text-lg font-extrabold text-slate-100 pb-3 mb-5 border-b border-slate-800 flex items-center gap-2">
+                    <h1 className="text-lg font-extrabold text-slate-100 pb-3 mb-4 border-b border-slate-800 flex items-center gap-2">
                       <span className="w-1.5 h-5 bg-gradient-to-b from-indigo-500 to-purple-500 rounded-full inline-block"></span>
                       <span>{children}</span>
                     </h1>
                   ),
                   h2: ({ children }) => (
-                    <h2 className="text-base font-bold text-indigo-200 mt-6 mb-3 pt-3 border-t border-slate-800/80 flex items-center gap-2">
+                    <h2 className="text-base font-bold text-indigo-200 mt-5 mb-2.5 pt-3 border-t border-slate-800/80 flex items-center gap-2">
                       <span>{children}</span>
                     </h2>
                   ),
                   h3: ({ children }) => (
-                    <h3 className="text-xs sm:text-sm font-bold text-slate-100 mt-4 mb-2 flex items-center gap-2 bg-slate-950/80 border border-slate-800 px-3.5 py-2 rounded-xl text-indigo-300">
+                    <h3 className="text-xs sm:text-sm font-bold text-indigo-300 mt-4 mb-2 flex items-center gap-1.5">
                       <span>{children}</span>
                     </h3>
                   ),
                   p: ({ children }) => (
-                    <p className="text-xs sm:text-sm text-slate-300 leading-relaxed my-2.5 font-sans">
+                    <p className="text-xs sm:text-sm text-slate-300 leading-relaxed my-2 font-sans">
                       {children}
                     </p>
                   ),
                   strong: ({ children }) => (
-                    <strong className="font-semibold text-indigo-300 bg-indigo-950/80 border border-indigo-800/60 px-1.5 py-0.5 rounded text-[12px] font-mono shadow-sm">
+                    <strong className="font-bold text-indigo-300 font-sans">
                       {children}
                     </strong>
                   ),
                   ul: ({ children }) => (
-                    <ul className="space-y-2 my-3 pl-1">
+                    <ul className="space-y-1.5 my-2.5 pl-4 list-disc text-slate-300">
                       {children}
                     </ul>
                   ),
+                  ol: ({ children }) => (
+                    <ol className="space-y-1.5 my-2.5 pl-4 list-decimal text-slate-300">
+                      {children}
+                    </ol>
+                  ),
                   li: ({ children }) => (
-                    <li className="text-xs sm:text-sm text-slate-300 flex items-start gap-2.5 leading-relaxed">
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-2 flex-shrink-0 shadow-sm shadow-indigo-500/50"></span>
-                      <div className="flex-1">{children}</div>
+                    <li className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                      {children}
                     </li>
                   ),
                   blockquote: ({ children }) => (
-                    <blockquote className="bg-indigo-950/40 border-l-4 border-indigo-500 rounded-r-xl p-3.5 text-indigo-200 my-4 text-xs leading-relaxed shadow-sm">
+                    <blockquote className="bg-indigo-950/40 border-l-4 border-indigo-500 rounded-r-xl p-3 text-indigo-200 my-3 text-xs leading-relaxed">
                       {children}
                     </blockquote>
                   ),
@@ -441,7 +468,7 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
                       {children}
                     </td>
                   ),
-                  hr: () => <hr className="my-5 border-slate-800/80" />
+                  hr: () => <hr className="my-4 border-slate-800/80" />
                 }}
               >
                 {displayedContent}
@@ -453,4 +480,3 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
     </div>
   );
 };
-
