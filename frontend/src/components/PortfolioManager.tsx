@@ -851,11 +851,44 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
 
           ) : activeTab === 'cleared' ? (
-            <div className="overflow-x-auto">
-              <div className="mb-4 flex items-center justify-between">
+            <div className="overflow-x-auto space-y-4">
+              {/* Top Performance Summary Banner for Cleared Stocks */}
+              <div className="bg-gradient-to-r from-purple-950/60 via-slate-900 to-indigo-950/60 border border-purple-800/40 rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-4 shadow-lg">
+                <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
+                  <div className="text-[11px] text-slate-400">已清仓标的总数</div>
+                  <div className="text-lg font-bold font-mono text-purple-300 mt-1">{clearedPositions.length} 只</div>
+                </div>
+                <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
+                  <div className="text-[11px] text-slate-400">盈利 / 亏损 标的数</div>
+                  <div className="text-sm font-semibold font-mono text-slate-200 mt-1 flex items-center space-x-2">
+                    <span className="text-red-400">盈利 {clearedPositions.filter(p => (p.profit_loss || 0) >= 0).length}</span>
+                    <span className="text-slate-600">|</span>
+                    <span className="text-emerald-400">亏损 {clearedPositions.filter(p => (p.profit_loss || 0) < 0).length}</span>
+                  </div>
+                </div>
+                <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
+                  <div className="text-[11px] text-slate-400">清仓胜率</div>
+                  <div className="text-lg font-bold font-mono text-amber-300 mt-1">
+                    {clearedPositions.length > 0
+                      ? `${((clearedPositions.filter(p => (p.profit_loss || 0) >= 0).length / clearedPositions.length) * 100).toFixed(1)}%`
+                      : '0.0%'}
+                  </div>
+                </div>
+                <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
+                  <div className="text-[11px] text-slate-400">清仓累计实现盈亏</div>
+                  <div className={`text-lg font-bold font-mono mt-1 ${
+                    clearedPositions.reduce((acc, p) => acc + (p.profit_loss || 0), 0) >= 0 ? 'text-red-400' : 'text-emerald-400'
+                  }`}>
+                    {clearedPositions.reduce((acc, p) => acc + (p.profit_loss || 0), 0) >= 0 ? '+' : ''}
+                    ¥{clearedPositions.reduce((acc, p) => acc + (p.profit_loss || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
                 <div className="text-xs text-purple-300 font-medium flex items-center space-x-1.5">
                   <Archive className="w-4 h-4 text-purple-400" />
-                  <span>历史清仓归档列表（共 {clearedPositions.length} 只已清仓股票）</span>
+                  <span>历史清仓战绩归档明细（共 {clearedPositions.length} 只已清仓股票）</span>
                 </div>
                 {clearedPositions.length > 0 && (
                   <button
@@ -871,62 +904,70 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                 <thead className="bg-slate-950 text-xs font-semibold uppercase text-slate-400 border-b border-slate-800 select-none">
                   <tr>
                     <th className="py-3 px-4">股票/基金名称与代码</th>
-                    <th className="py-3 px-4 text-right">历史买入成本</th>
-                    <th className="py-3 px-4 text-right">当前最新行情</th>
-                    <th className="py-3 px-4 text-center">持仓状态</th>
+                    <th className="py-3 px-4 text-right">买入成本</th>
+                    <th className="py-3 px-4 text-right">卖出/市价</th>
+                    <th className="py-3 px-4 text-right">最终盈亏</th>
+                    <th className="py-3 px-4 text-center">状态</th>
                     <th className="py-3 px-4 text-center">操作</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-800/60">
+                <tbody className="divide-y divide-slate-800/60 font-mono text-xs">
                   {clearedPositions.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-8 text-center text-xs text-slate-500">
+                      <td colSpan={6} className="py-8 text-center text-xs text-slate-500 font-sans">
                         暂无历史清仓归档记录
                       </td>
                     </tr>
                   ) : (
-                    clearedPositions.map((pos) => (
-                      <tr key={pos.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="py-3.5 px-4">
-                          <div
-                            onClick={() => onSelectStock(pos.symbol)}
-                            className="font-bold text-slate-100 hover:text-indigo-400 cursor-pointer flex items-center space-x-2"
-                          >
-                            <span>{pos.name}</span>
-                            {pos.symbol.startsWith('15') || pos.symbol.startsWith('51') ? (
-                              <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/50 rounded-md">
-                                ETF基金
-                              </span>
-                            ) : (
-                              <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-slate-800 text-slate-400 rounded-md">
-                                A股股票
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-xs font-mono text-slate-400">{pos.symbol}</div>
-                        </td>
-                        <td className="py-3.5 px-4 text-right font-mono text-slate-300">
-                          ¥{pos.cost_price?.toFixed(2)}
-                        </td>
-                        <td className="py-3.5 px-4 text-right font-mono font-semibold text-slate-100">
-                          ¥{pos.current_price?.toFixed(2)}
-                        </td>
-                        <td className="py-3.5 px-4 text-center">
-                          <span className="px-2.5 py-1 text-xs rounded-full bg-purple-950/80 text-purple-300 border border-purple-800/50 font-medium">
-                            已清仓 (0 股)
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4 text-center">
-                          <button
-                            onClick={() => handleDeletePosition(pos.id)}
-                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors"
-                            title="删除清仓归档"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                    clearedPositions.map((pos) => {
+                      const pnl = pos.profit_loss || 0;
+                      const isWin = pnl >= 0;
+                      return (
+                        <tr key={pos.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3.5 px-4 font-sans">
+                            <div
+                              onClick={() => onSelectStock(pos.symbol)}
+                              className="font-bold text-slate-100 hover:text-indigo-400 cursor-pointer flex items-center space-x-2"
+                            >
+                              <span>{pos.name}</span>
+                              {pos.symbol.startsWith('15') || pos.symbol.startsWith('51') ? (
+                                <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/50 rounded-md">
+                                  ETF基金
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-slate-800 text-slate-400 rounded-md">
+                                  A股股票
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs font-mono text-slate-400">{pos.symbol}</div>
+                          </td>
+                          <td className="py-3.5 px-4 text-right text-slate-300">
+                            ¥{pos.cost_price?.toFixed(3)}
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-semibold text-slate-100">
+                            ¥{pos.current_price?.toFixed(3)}
+                          </td>
+                          <td className={`py-3.5 px-4 text-right font-bold ${isWin ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {isWin ? '+' : ''}¥{pnl.toFixed(2)}
+                          </td>
+                          <td className="py-3.5 px-4 text-center font-sans">
+                            <span className="px-2.5 py-1 text-[11px] rounded-full bg-purple-950/80 text-purple-300 border border-purple-800/50 font-medium">
+                              已清仓 (0 股)
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <button
+                              onClick={() => handleDeletePosition(pos.id)}
+                              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors"
+                              title="删除清仓归档"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

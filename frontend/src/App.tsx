@@ -29,8 +29,27 @@ export const App: React.FC = () => {
   const [aiTargetScope, setAiTargetScope] = useState<string>('ALL');
   const [aiAutoStartKey, setAiAutoStartKey] = useState<number>(0);
 
+  const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   useEffect(() => {
     fetchAllData();
+  }, []);
+
+  // Global Keyboard Shortcuts (Ctrl+K to Search, Esc to Close)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+      } else if (e.key === 'Escape') {
+        setIsSearchOpen(false);
+        setIsSettingsOpen(false);
+        setSelectedStockSymbol(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   const fetchAllData = async () => {
@@ -73,6 +92,17 @@ export const App: React.FC = () => {
     setAiAutoStartKey(Date.now());
     setActiveTab('ai');
   };
+
+  const allKnownStocks = [
+    ...positions.map((p) => ({ symbol: p.symbol, name: p.name, type: '持仓' })),
+    ...watchlists.map((w) => ({ symbol: w.symbol, name: w.name, type: '自选' }))
+  ].filter((v, i, a) => a.findIndex((t) => t.symbol === v.symbol) === i);
+
+  const filteredSearchStocks = searchQuery.trim()
+    ? allKnownStocks.filter(
+        (s) => s.symbol.includes(searchQuery.trim()) || s.name.includes(searchQuery.trim())
+      )
+    : allKnownStocks;
 
   return (
     <div className="app-shell text-slate-100 flex flex-col font-sans">
@@ -130,8 +160,10 @@ export const App: React.FC = () => {
           <TradeReviewTab
             onSelectStock={(symbol) => setSelectedStockSymbol(symbol)}
             onRefreshAll={fetchAllData}
+            onOpenSettings={() => setIsSettingsOpen(true)}
           />
         )}
+
       </main>
 
 
@@ -156,6 +188,53 @@ export const App: React.FC = () => {
           onClose={() => setIsSettingsOpen(false)}
           onRefreshConfigs={fetchAllData}
         />
+      )}
+
+      {/* Global Quick Search Modal (Ctrl+K) */}
+      {isSearchOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center pt-20 p-4">
+          <div className="surface-card rounded-2xl max-w-lg w-full p-4 space-y-3 shadow-2xl border border-indigo-500/40">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <span className="text-xs font-bold text-indigo-300">🔍 全局快捷股票搜索 (Esc 退出)</span>
+              <span className="px-2 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded-md font-mono">Ctrl + K</span>
+            </div>
+
+            <input
+              type="text"
+              autoFocus
+              placeholder="输入股票代码或中文名称搜索..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"
+            />
+
+            <div className="max-h-60 overflow-y-auto space-y-1">
+              {filteredSearchStocks.length === 0 ? (
+                <div className="text-xs text-slate-500 text-center py-4">未找到匹配的股票</div>
+              ) : (
+                filteredSearchStocks.map((stk) => (
+                  <div
+                    key={stk.symbol}
+                    onClick={() => {
+                      setIsSearchOpen(false);
+                      setSearchQuery('');
+                      setSelectedStockSymbol(stk.symbol);
+                    }}
+                    className="p-2.5 bg-slate-950 hover:bg-indigo-950/50 border border-slate-800/80 rounded-xl flex items-center justify-between cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <span className="font-bold text-xs text-slate-100">{stk.name}</span>
+                      <span className="text-xs font-mono text-slate-400">({stk.symbol})</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 bg-slate-800 text-slate-300 rounded-full font-semibold">
+                      {stk.type}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       )}
       </Suspense>
     </div>

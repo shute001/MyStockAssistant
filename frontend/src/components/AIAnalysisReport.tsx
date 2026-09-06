@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Play, History, FileText, CheckCircle2, AlertTriangle, Sparkles, Filter, Layers, Briefcase, Search } from 'lucide-react';
+import { Cpu, Play, History, FileText, CheckCircle2, AlertTriangle, Sparkles, Filter, Layers, Briefcase, Search, Send } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AnalysisReportItem, LLMConfigItem } from '../types';
@@ -24,6 +24,32 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [reports, setReports] = useState<AnalysisReportItem[]>([]);
   const [selectedHistoryReport, setSelectedHistoryReport] = useState<AnalysisReportItem | null>(null);
+  const [isPushingWeChat, setIsPushingWeChat] = useState<boolean>(false);
+
+  const handlePushToWeChat = async (content: string) => {
+    if (!content) {
+      alert('暂无诊断报告内容');
+      return;
+    }
+    setIsPushingWeChat(true);
+    try {
+      const res = await axios.post('/api/v1/ai/push-review', {
+        title: '📊 AI 盘后量化诊断报告',
+        content_md: content
+      });
+      if (res.data.status === 'success') {
+        alert('✅ 诊断报告已成功推送至您的手机微信！');
+      } else {
+        alert(`推送失败: ${res.data.detail || '请在设置中配置微信 SendKey 或 Token'}`);
+      }
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || err.message;
+      alert(`推送失败: ${detail}`);
+    } finally {
+      setIsPushingWeChat(false);
+    }
+  };
+
 
   // Diagnosis Scope State
   const [diagnosisScope, setDiagnosisScope] = useState<string>(initialScope || 'ALL');
@@ -376,15 +402,28 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
             </div>
           </div>
 
-          {selectedHistoryReport && (
-            <button
-              onClick={() => setSelectedHistoryReport(null)}
-              className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 rounded-xl transition-all font-medium flex items-center space-x-1"
-            >
-              <span>← 返回最新流式视图</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {displayedContent && !isGenerating && (
+              <button
+                onClick={() => handlePushToWeChat(displayedContent)}
+                disabled={isPushingWeChat}
+                className="px-3 py-1.5 bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-md"
+              >
+                <Send className={`w-3.5 h-3.5 ${isPushingWeChat ? 'animate-pulse' : ''}`} />
+                <span>{isPushingWeChat ? '推送中...' : '📱 发送至微信'}</span>
+              </button>
+            )}
+            {selectedHistoryReport && (
+              <button
+                onClick={() => setSelectedHistoryReport(null)}
+                className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 rounded-xl transition-all font-medium flex items-center space-x-1"
+              >
+                <span>← 返回最新流式视图</span>
+              </button>
+            )}
+          </div>
         </div>
+
 
         {/* Report Body / Markdown Renderer - Spacious canvas, direct flow, no ugly inner boxes */}
         <div className="flex-1 p-4 sm:p-8 overflow-y-auto font-sans leading-relaxed text-slate-200 selection:bg-indigo-900 selection:text-indigo-100">

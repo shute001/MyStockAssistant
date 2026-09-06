@@ -6,10 +6,11 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 
-from database import get_db, Position, Watchlist, Stock, AnalysisReport, TradeRecord, bj_now
+from database import get_db, Position, Watchlist, Stock, AnalysisReport, TradeRecord, AgentMemory, PushConfig, bj_now
 from services.market_data import MarketDataService
 from services.llm_engine import MultiLLMEngine
 from services.agent_memory import AgentMemoryService
+from services.notifier import send_wechat_notification
 
 
 router = APIRouter(prefix="/ai", tags=["AI Stock Analysis"])
@@ -19,6 +20,12 @@ class SingleStockAnalyzeRequest(BaseModel):
 
 class PortfolioAnalyzeRequest(BaseModel):
     scope: Optional[str] = "ALL"  # "ALL" | "POSITIONS_ONLY" | "CATEGORY:板块名"
+
+class PushReviewRequest(BaseModel):
+    report_id: Optional[int] = None
+    title: Optional[str] = "📊 AI 股票交易复盘诊断报告"
+    content_md: Optional[str] = None
+
 
 @router.post("/analyze/portfolio/stream")
 async def analyze_portfolio_stream(req: Optional[PortfolioAnalyzeRequest] = None, db: Session = Depends(get_db)):
@@ -123,8 +130,31 @@ async def analyze_single_stock_stream(req: SingleStockAnalyzeRequest, db: Sessio
     prompt = MultiLLMEngine.build_single_stock_prompt(symbol, name, indicators, macro_context=macro_context)
     return StreamingResponse(MultiLLMEngine.generate_analysis_stream(db, prompt), media_type="text/event-stream")
 
+@router.get("/reports/latest")
+def get_latest_report(report_type: Optional[str] = None, db: Session = Depends(get_db)):
+    """Get the latest analysis report by report_type"""
+    query = db.query(AnalysisReport)
+    if report_type:
+        query = query.filter(AnalysisReport.report_type == report_type)
+    report = query.order_by(AnalysisReport.generated_at.desc()).first()
+    if not report:
+        return {"status": "none", "report": None}
+    dt_str = report.generated_at.strftime("%Y-%m-%d %H:%M:%S") if report.generated_at else ""
+    return {
+        "status": "success",
+        "report": {
+            "id": report.id,
+            "report_type": report.report_type,
+            "provider_model": report.provider_model,
+            "input_summary": report.input_summary,
+            "content_md": report.content_md,
+            "generated_at": dt_str
+        }
+    }
+
 @router.get("/reports")
 def get_reports(limit: int = Query(10, le=50), db: Session = Depends(get_db)):
+
     """Get historical analysis reports with formatted Beijing Time (UTC+8)"""
     reports = db.query(AnalysisReport).order_by(AnalysisReport.generated_at.desc()).limit(limit).all()
     results = []
@@ -161,6 +191,13 @@ class MemoryCreateRequest(BaseModel):
     memory_type: Optional[str] = "USER_HABIT"
     importance: Optional[int] = 3
 
+class ActivatePlaybookRequest(BaseModel):
+    playbook_id: str
+
+class ExtractRulesRequest(BaseModel):
+    text: str
+    title: Optional[str] = "战法心得文章"
+
 class AgentChatMessage(BaseModel):
     role: str
     content: str
@@ -172,7 +209,7 @@ class AgentChatPayload(BaseModel):
 
 @router.post("/agent/chat-stream")
 async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depends(get_db)):
-    """Stream multi-turn conversation with Trade Review Coach AI Agent with memory injection"""
+    """Stream multi-turn conversation with Trade Review Coach AI Agent with memory, real-time quotes & news injection"""
     # 1. Fetch user recent trade history (last 20 trades)
     trades = db.query(TradeRecord).order_by(TradeRecord.trade_date.desc()).limit(20).all()
     trade_payload = []
@@ -188,26 +225,78 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
             "trade_date": t.trade_date.strftime("%Y-%m-%d %H:%M:%S") if t.trade_date else ""
         })
 
-    # 2. Fetch user current positions
+    # 2. Fetch user current positions with real-time quotes & market data
     positions = db.query(Position).all()
+    pos_symbols = [p.symbol for p in positions]
+    quotes_map = MarketDataService.get_batch_realtime_quotes(pos_symbols) if pos_symbols else {}
+    
     pos_payload = []
     for p in positions:
         stock = db.query(Stock).filter(Stock.symbol == p.symbol).first()
+        s_name = stock.name if stock else p.symbol
+        q_info = quotes_map.get(p.symbol, {})
         pos_payload.append({
             "symbol": p.symbol,
-            "name": stock.name if stock else p.symbol,
+            "name": q_info.get("name") or s_name,
             "cost_price": p.cost_price,
+            "current_price": q_info.get("current_price", p.cost_price),
+            "pct_chg": q_info.get("pct_chg", "0.00%"),
             "current_volume": p.current_volume,
             "strategy_tag": p.strategy_tag
         })
 
-    # 3. Fetch agent active memories
+    # 3. Fetch Real-time Market Macro & News Context (Indices, Hot Sectors, Sina Financial News)
+    macro_context = MarketDataService.get_market_macro_context()
+    macro_block = MarketDataService.format_macro_prompt_block(macro_context)
+
+    # 4. Dynamically detect mentioned stocks in user's message & fetch K-line indicators (or auto-fetch top holdings)
+    import re
+    last_user_text = payload.messages[-1].content if payload.messages else ""
+    symbols_found = set(re.findall(r'\d{6}', last_user_text))
+    
+    # Also match by Chinese stock name in DB or common ETF names
+    all_stocks = db.query(Stock).all()
+    for stk in all_stocks:
+        if stk.name and len(stk.name) >= 2 and stk.name in last_user_text:
+            symbols_found.add(stk.symbol)
+
+    # If no specific stock is mentioned in message, automatically add top 3 holding positions' K-line indicators!
+    if not symbols_found and positions:
+        for p in positions[:3]:
+            symbols_found.add(p.symbol)
+
+    queried_indicators = []
+    for sym in list(symbols_found)[:5]:
+        stk_info = MarketDataService.get_stock_indicators_summary(sym)
+        if stk_info and "error" not in stk_info:
+            queried_indicators.append(stk_info)
+    
+    queried_stock_block = ""
+    if queried_indicators:
+        queried_stock_block = f"""
+### 📌 核心个股与持仓标的【实时 K 线与技术指标研判数据】(包含 MA5/10/20 均线、MACD, KDJ 及 30日支撑与压力位)：
+{json.dumps(queried_indicators, ensure_ascii=False, indent=2)}
+"""
+
+    # 5. Fetch agent active memories (Master Playbooks & Lessons)
     memories_prompt = AgentMemoryService.format_memories_for_prompt(db)
 
-    system_prompt = f"""你是一位专业的 A 股交易教练 AI Agent，具备深厚的量化操盘、行为金融学与心态管理经验。
-你长期观察并记录用户的真实交易历史与操作偏好，负责耐心地与用户对话答疑、诊断其交易心理、分析操作盲点并给出犀利而建设性的改进建议。
+    system_prompt = f"""你是一位专业的 A 股交易教练 AI Agent，具备深厚的量化操盘、实时行情研判、行为金融学与心态管理经验。
 
-【用户当前持仓】
+【⚠️ 最高权威指令 - 你的核心能力认知】
+1. 你已经**全面接入并拥有获取 A 股全市场及 ETF 的实时价格、K 线图技术指标（MA5/10/20均线多空、MACD金叉死叉、KDJ摆动状态、支撑阻力位）以及联网大盘与财经新闻的能力**！
+当用户询问你“能否获取实时价格和K线图”或“能否联网”时，你必须**非常明确且自信地回答**：
+“完全可以！我已全面接入 A 股及 ETF 的实时价格行情、K 线均线系统（MA5/10/20）、MACD/KDJ 摆动指标以及大盘新闻快讯。您可以直接告诉我任何股票代码（如 159883、600519）或名称（如 医疗器械ETF、贵州茅台），我将立即为您调出最新的实时价格、K 线形态与买卖支撑位进行专业解读！”
+
+2. **微信消息推送能力**：
+你系统层面已完全支持将你的分析、复盘与策略总结实时发送到用户的个人微信（基于 Server酱 / PushPlus / 企业微信通道）！
+当用户要求你“推送到微信”、“发送到微信”、“把总结/分析发到微信”、“微信推送”等请求时，你必须**非常自信地回答**：
+“好的！我已将本次的操盘分析与策略总结实时发送至您的微信，请在手机微信中查收！”，并在回答第一行包含标识 `[WECHAT_PUSH_REQUESTED]`，随后随附整理好的【微信精简版复盘/策略卡片】。
+
+{macro_block}
+{queried_stock_block}
+
+【用户当前持仓 (包含实时报价与盈亏状态)】
 {json.dumps(pos_payload, ensure_ascii=False, indent=2)}
 
 【用户近期交易历史记录】
@@ -215,9 +304,8 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 
 {memories_prompt}
 
-请基于上述持仓、历史交割单和认知记忆，以专业、沉稳、建设性的语气同用户进行对话，直接回答用户的提问，指出其可能存在的操盘陷阱（如频繁交易、追高被套、重仓不止损等），并给出可落地的改善动作。语气平易近人且富有洞察力。
+请基于上述大盘宏观热点、实时行情与 K 线指标、持仓交割单和认知战法，以专业、沉稳、建设性的语气同用户进行对话。如果用户询问某只股票或具体盘口，请直接引用提供的最新行情指标与大盘热点给出犀利而精准的解答！
 """
-
 
     messages_payload = [{"role": msg.role, "content": msg.content} for msg in payload.messages]
 
@@ -228,14 +316,29 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
                 response_text += chunk
                 yield chunk
 
+        # Check if user requested push to WeChat or tag emitted
+        last_user_msg = payload.messages[-1].content if payload.messages else ""
+        if "[WECHAT_PUSH_REQUESTED]" in response_text or any(k in last_user_msg for k in ["推送到微信", "发送到微信", "微信推送", "发到微信", "发微信"]):
+            push_cfg = db.query(PushConfig).first()
+            if push_cfg and push_cfg.is_enabled and push_cfg.secret_key:
+                try:
+                    clean_push_content = response_text.replace("[WECHAT_PUSH_REQUESTED]", "").strip()
+                    await send_wechat_notification(
+                        title=f"🤖 AI 交易教练对话研判 ({bj_now().strftime('%H:%M')})",
+                        content_md=clean_push_content,
+                        channel=push_cfg.channel,
+                        secret_key=push_cfg.secret_key
+                    )
+                except Exception:
+                    pass
 
         # Trigger background auto memory evolution if meaningful
         if len(response_text) > 30 and len(payload.messages) > 0:
-            last_user_msg = payload.messages[-1].content
             conversation_snippet = f"用户问：{last_user_msg}\nAgent答：{response_text}"
             AgentMemoryService.auto_extract_and_evolve(db, conversation_snippet, source_label="Agent 交互对话")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 
 @router.post("/agent/review-stream")
@@ -244,7 +347,9 @@ async def review_trades_agent_stream(db: Session = Depends(get_db)):
     """Stream Trade Review Agent analysis with memory injection & auto-evolution"""
     trades = db.query(TradeRecord).order_by(TradeRecord.trade_date.desc()).limit(30).all()
     trade_payload = []
+    unique_symbols = set()
     for t in trades:
+        unique_symbols.add(t.symbol)
         trade_payload.append({
             "symbol": t.symbol,
             "name": t.name,
@@ -255,6 +360,13 @@ async def review_trades_agent_stream(db: Session = Depends(get_db)):
             "strategy_reason": t.strategy_reason or "无说明",
             "trade_date": t.trade_date.strftime("%Y-%m-%d %H:%M:%S") if t.trade_date else ""
         })
+
+    # Fetch real-time indicators summary for all traded stocks
+    traded_stocks_indicators = {}
+    for sym in list(unique_symbols)[:6]:
+        stk_info = MarketDataService.get_stock_indicators_summary(sym)
+        if stk_info and "error" not in stk_info:
+            traded_stocks_indicators[sym] = stk_info
 
     positions = db.query(Position).all()
     pos_payload = []
@@ -269,7 +381,14 @@ async def review_trades_agent_stream(db: Session = Depends(get_db)):
         })
 
     macro_context = MarketDataService.get_market_macro_context()
-    prompt = MultiLLMEngine.build_trade_review_prompt(db, trade_payload, pos_payload, macro_context=macro_context)
+    prompt = MultiLLMEngine.build_trade_review_prompt(
+        db, 
+        trade_payload, 
+        pos_payload, 
+        macro_context=macro_context,
+        traded_stocks_indicators=traded_stocks_indicators
+    )
+
 
     async def event_generator():
         report_text = ""
@@ -295,7 +414,50 @@ async def review_trades_agent_stream(db: Session = Depends(get_db)):
         # Trigger Memory Evolution to learn from this session!
         AgentMemoryService.auto_extract_and_evolve(db, report_text, source_label=f"复盘报告 #{report.id}")
 
+        # Check WeChat Auto Push Config
+        push_cfg = db.query(PushConfig).first()
+        if push_cfg and push_cfg.is_enabled and push_cfg.auto_push_review and push_cfg.secret_key:
+            try:
+                await send_wechat_notification(
+                    title=f"📊 AI 交易复盘报告 ({bj_now().strftime('%Y-%m-%d %H:%M')})",
+                    content_md=report_text,
+                    channel=push_cfg.channel,
+                    secret_key=push_cfg.secret_key
+                )
+            except Exception:
+                pass
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@router.post("/push-review")
+async def push_review_to_wechat(req: PushReviewRequest, db: Session = Depends(get_db)):
+    """Push a review report or custom markdown to configured WeChat channel"""
+    push_cfg = db.query(PushConfig).first()
+    if not push_cfg or not push_cfg.is_enabled or not push_cfg.secret_key:
+        raise HTTPException(status_code=400, detail="未开启微信消息推送，请先在设置中填入 SendKey 或 Token 并保存开启")
+
+    content = req.content_md
+    if not content and req.report_id:
+        rpt = db.query(AnalysisReport).filter(AnalysisReport.id == req.report_id).first()
+        if rpt:
+            content = rpt.content_md
+
+    if not content:
+        last_rpt = db.query(AnalysisReport).filter(AnalysisReport.report_type == "TRADE_REVIEW_AGENT").order_by(AnalysisReport.generated_at.desc()).first()
+        if last_rpt:
+            content = last_rpt.content_md
+
+    if not content:
+        raise HTTPException(status_code=404, detail="未找到可推送的复盘报告内容")
+
+    res = await send_wechat_notification(
+        title=req.title or "📊 AI 股票交易复盘诊断报告",
+        content_md=content,
+        channel=push_cfg.channel,
+        secret_key=push_cfg.secret_key
+    )
+    return res
+
 
 @router.get("/agent/memories")
 def get_agent_memories(limit: int = Query(50, le=100), db: Session = Depends(get_db)):
@@ -321,6 +483,66 @@ def delete_agent_memory(memory_id: int, db: Session = Depends(get_db)):
     if not success:
         raise HTTPException(status_code=404, detail="Memory not found")
     return {"status": "success", "deleted_id": memory_id}
+
+@router.get("/agent/playbooks")
+def get_preset_playbooks(db: Session = Depends(get_db)):
+    """Fetch preset master playbooks with activation state"""
+    active_mems = db.query(AgentMemory).filter(
+        AgentMemory.agent_name == AgentMemoryService.AGENT_NAME,
+        AgentMemory.memory_type == "MASTER_PLAYBOOK"
+    ).all()
+    active_contents = {m.content.strip() for m in active_mems}
+
+    playbooks = []
+    for pb in AgentMemoryService.PRESET_PLAYBOOKS:
+        is_active = pb["content"].strip() in active_contents
+        playbooks.append({
+            **pb,
+            "is_activated": is_active
+        })
+    return playbooks
+
+@router.post("/agent/playbooks/activate")
+def activate_playbook(payload: ActivatePlaybookRequest, db: Session = Depends(get_db)):
+    """Activate a preset master playbook into Agent long-term memory"""
+    pb = next((p for p in AgentMemoryService.PRESET_PLAYBOOKS if p["id"] == payload.playbook_id), None)
+    if not pb:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+
+    mem = AgentMemoryService.add_memory(
+        db=db,
+        content=pb["content"],
+        memory_type="MASTER_PLAYBOOK",
+        importance=5,
+        source_info=f"预置战法:{pb['name']}"
+    )
+    return {"status": "success", "message": f"已成功将【{pb['name']}】激活注入为 Agent 顶级指导战法！", "id": mem.id}
+
+@router.post("/agent/extract-rules")
+async def extract_rules_from_text(payload: ExtractRulesRequest, db: Session = Depends(get_db)):
+    """Extract actionable trading rules from text/article using LLM and save into Agent memory"""
+    if not payload.text or len(payload.text.strip()) < 10:
+        raise HTTPException(status_code=400, detail="文本长度不足，请输入有效的战法/心得内容")
+
+    extracted_rules = await MultiLLMEngine.extract_master_rules_from_text(db, payload.text)
+    
+    saved_mems = []
+    source_label = payload.title or "战法心得文章"
+    for rule in extracted_rules:
+        mem = AgentMemoryService.add_memory(
+            db=db,
+            content=rule,
+            memory_type="MASTER_PLAYBOOK",
+            importance=5,
+            source_info=f"文章萃取:{source_label}"
+        )
+        saved_mems.append({"id": mem.id, "content": mem.content})
+
+    return {
+        "status": "success",
+        "extracted_rules": extracted_rules,
+        "saved_memories": saved_mems
+    }
 
 @router.post("/screener/run-stream")
 async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):

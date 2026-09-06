@@ -25,6 +25,8 @@ class TradeCreatePayload(BaseModel):
     strategy_reason: Optional[str] = None
     trade_date: Optional[str] = None  # YYYY-MM-DD HH:MM:SS or YYYY-MM-DD
     sync_to_position: Optional[bool] = True
+    is_planned: Optional[bool] = True
+    trade_tag: Optional[str] = "计划内执行"
 
 class TradeBatchItem(BaseModel):
     symbol: str
@@ -35,6 +37,8 @@ class TradeBatchItem(BaseModel):
     fee: Optional[float] = 0.0
     strategy_reason: Optional[str] = None
     trade_date: Optional[str] = None
+    is_planned: Optional[bool] = True
+    trade_tag: Optional[str] = "计划内执行"
 
 class TradeBatchPayload(BaseModel):
     items: List[TradeBatchItem]
@@ -53,19 +57,19 @@ class ClipboardParsePayload(BaseModel):
 
 
 def calculate_trade_ledger(records: List[TradeRecord]) -> dict:
-    """Calculate cash flow and FIFO realised P&L from the filtered trade ledger.
-
-    This is intentionally derived from immutable transaction records, not the
-    current position table, so it remains useful for cleared positions as well.
-    Unmatched sells are reported instead of inventing a cost basis.
-    """
+    """Calculate cash flow, win rate, P/L ratio, expectancy, and FIFO realised P&L"""
     lots: dict[str, list[list[float]]] = {}
     realised_pnl = 0.0
     unmatched_sell_volume = 0
     total_fees = 0.0
     net_cash_flow = 0.0
+    matched_pnls: list[float] = []
 
+    planned_count = 0
     for trade in records:
+        if getattr(trade, 'is_planned', True):
+            planned_count += 1
+
         volume = max(int(trade.volume or 0), 0)
         fee = float(trade.fee or 0.0)
         amount = float(trade.amount or 0.0)
@@ -95,17 +99,36 @@ def calculate_trade_ledger(records: List[TradeRecord]) -> dict:
         matched_volume = volume - remaining
         if remaining:
             unmatched_sell_volume += remaining
-        # Only recognise P&L for the matched quantity. A sell without an
-        # imported cost basis is visible to the user, but never treated as
-        # zero-cost profit.
+
         matched_proceeds = (amount - fee) * matched_volume / volume if volume else 0.0
-        realised_pnl += matched_proceeds - matched_cost
+        trade_pnl = matched_proceeds - matched_cost
+        realised_pnl += trade_pnl
+        if matched_volume > 0:
+            matched_pnls.append(trade_pnl)
+
+    # Compute Win Rate, Profit/Loss Ratio & Expectancy
+    winning_trades = [p for p in matched_pnls if p > 0]
+    losing_trades = [p for p in matched_pnls if p < 0]
+    
+    total_matched = len(matched_pnls)
+    win_rate = round((len(winning_trades) / total_matched * 100), 1) if total_matched > 0 else 0.0
+    avg_win = (sum(winning_trades) / len(winning_trades)) if winning_trades else 0.0
+    avg_loss = (abs(sum(losing_trades)) / len(losing_trades)) if losing_trades else 0.0
+
+    pnl_ratio = round(avg_win / avg_loss, 2) if avg_loss > 0 else (99.0 if avg_win > 0 else 0.0)
+    expectancy = round(((win_rate / 100) * avg_win) - ((1 - win_rate / 100) * avg_loss), 2)
+    planned_ratio = round(planned_count / len(records) * 100, 1) if records else 100.0
 
     return {
         "realized_pnl": round(realised_pnl, 2),
         "net_cash_flow": round(net_cash_flow, 2),
         "total_fees": round(total_fees, 2),
-        "unmatched_sell_volume": unmatched_sell_volume
+        "unmatched_sell_volume": unmatched_sell_volume,
+        "win_rate": win_rate,
+        "profit_loss_ratio": pnl_ratio,
+        "expectancy": expectancy,
+        "planned_ratio": planned_ratio,
+        "total_closed_trades": total_matched
     }
 
 
@@ -189,6 +212,8 @@ def get_trade_records(
             "fee": r.fee,
             "trade_date": r.trade_date.strftime("%Y-%m-%d %H:%M:%S") if r.trade_date else "",
             "strategy_reason": r.strategy_reason or "",
+            "is_planned": getattr(r, 'is_planned', True),
+            "trade_tag": getattr(r, 'trade_tag', '计划内执行') or '计划内执行',
             "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else ""
         })
 
@@ -247,6 +272,8 @@ def create_trade_record(payload: TradeCreatePayload, db: Session = Depends(get_d
         amount=amount,
         fee=payload.fee or 0.0,
         strategy_reason=payload.strategy_reason,
+        is_planned=payload.is_planned if payload.is_planned is not None else True,
+        trade_tag=payload.trade_tag or ("计划内执行" if (payload.is_planned is None or payload.is_planned) else "计划外冲动"),
         trade_date=t_date,
         created_at=bj_now()
     )
@@ -351,6 +378,9 @@ def batch_create_trades(payload: TradeBatchPayload, db: Session = Depends(get_db
                 existing_record.fee = item.fee or 0.0
                 if item.strategy_reason:
                     existing_record.strategy_reason = item.strategy_reason
+                existing_record.is_planned = item.is_planned if item.is_planned is not None else True
+                if item.trade_tag:
+                    existing_record.trade_tag = item.trade_tag
                 overwritten_count += 1
                 continue
 
@@ -364,6 +394,8 @@ def batch_create_trades(payload: TradeBatchPayload, db: Session = Depends(get_db
             amount=amount,
             fee=item.fee or 0.0,
             strategy_reason=item.strategy_reason or "交割单批量导入",
+            is_planned=item.is_planned if item.is_planned is not None else True,
+            trade_tag=item.trade_tag or ("计划内执行" if (item.is_planned is None or item.is_planned) else "计划外冲动"),
             trade_date=t_date,
             created_at=bj_now()
         )
@@ -380,6 +412,48 @@ def batch_create_trades(payload: TradeBatchPayload, db: Session = Depends(get_db
         db.add_all(trades_to_add)
 
     db.commit()
+
+    # Optional: Sync affected symbols to Position table
+    if payload.sync_to_position and trades_to_add:
+        affected_symbols = {t.symbol for t in trades_to_add}
+        for sym in affected_symbols:
+            all_records = db.query(TradeRecord).filter(TradeRecord.symbol == sym).order_by(TradeRecord.trade_date.asc(), TradeRecord.id.asc()).all()
+            vol = 0
+            total_cost_spent = 0.0
+            for r in all_records:
+                if r.trade_type == "BUY":
+                    vol += r.volume
+                    total_cost_spent += r.price * r.volume
+                elif r.trade_type == "SELL":
+                    if vol > 0:
+                        cost_per_share = total_cost_spent / vol
+                        vol = max(0, vol - r.volume)
+                        total_cost_spent = vol * cost_per_share
+                    else:
+                        vol = 0
+                        total_cost_spent = 0.0
+
+            avg_cost = round(total_cost_spent / vol, 3) if vol > 0 else 0.0
+
+            pos = db.query(Position).filter(Position.symbol == sym).first()
+            if vol > 0:
+                if pos:
+                    pos.current_volume = vol
+                    pos.cost_price = avg_cost
+                    pos.strategy_tag = "当前持仓"
+                else:
+                    pos = Position(
+                        symbol=sym,
+                        cost_price=avg_cost,
+                        current_volume=vol,
+                        strategy_tag="建仓买入"
+                    )
+                    db.add(pos)
+            else:
+                if pos:
+                    pos.current_volume = 0
+                    pos.strategy_tag = "历史清仓"
+        db.commit()
 
     return {
         "status": "success",

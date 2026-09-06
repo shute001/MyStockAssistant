@@ -17,6 +17,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
 }) => {
   const [klineData, setKlineData] = useState<KLineRecord[]>([]);
   const [stockName, setStockName] = useState<string>('');
+  const [tradeRecords, setTradeRecords] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dataHealth, setDataHealth] = useState({ status: 'unknown', source: '', updatedAt: '' });
 
@@ -24,12 +25,14 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
     const fetchKline = async () => {
       setIsLoading(true);
       try {
-        const [klineRes, watchRes] = await Promise.all([
+        const [klineRes, watchRes, tradeRes] = await Promise.all([
           axios.get(`/api/v1/stocks/${symbol}/kline?days=60`),
-          axios.get('/api/v1/stocks/watchlists').catch(() => ({ data: [] }))
+          axios.get('/api/v1/stocks/watchlists').catch(() => ({ data: [] })),
+          axios.get(`/api/v1/trades?symbol=${symbol}&page_size=200`).catch(() => ({ data: { items: [] } }))
         ]);
         const records: KLineRecord[] = klineRes.data || [];
         setKlineData(records);
+        setTradeRecords(tradeRes.data?.items || []);
         setDataHealth({
           status: klineRes.headers['x-market-data-status'] || 'unknown',
           source: klineRes.headers['x-market-data-source'] || '',
@@ -57,6 +60,29 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
   const ma10 = klineData.map((d) => d.ma10 || null);
   const ma20 = klineData.map((d) => d.ma20 || null);
   const volumes = klineData.map((d, idx) => [idx, d.volume, d.close >= d.open ? 1 : -1]);
+
+  // Map trade history into B/S markPoints for K-line
+  const tradeMarkPoints = tradeRecords
+    .map((t: any) => {
+      const dateStr = t.trade_date ? t.trade_date.split(' ')[0] : '';
+      const isBuy = t.trade_type === 'BUY';
+      return {
+        name: isBuy ? '买入' : '卖出',
+        coord: [dateStr, t.price],
+        value: isBuy ? `B ${t.price}` : `S ${t.price}`,
+        itemStyle: {
+          color: isBuy ? '#EF4444' : '#10B981'
+        },
+        label: {
+          color: '#FFFFFF',
+          fontSize: 10,
+          fontWeight: 'bold'
+        },
+        symbol: 'pin',
+        symbolSize: 42
+      };
+    })
+    .filter((mp) => dates.includes(mp.coord[0]));
 
   const option = {
     backgroundColor: 'transparent',
@@ -122,6 +148,9 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
           color0: '#10B981',     // A股绿跌
           borderColor: '#EF4444',
           borderColor0: '#10B981'
+        },
+        markPoint: {
+          data: tradeMarkPoints
         }
       },
       { name: 'MA5', type: 'line', data: ma5, smooth: true, lineStyle: { width: 1.5, color: '#38BDF8' } },

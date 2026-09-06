@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import ReactECharts from 'echarts-for-react';
 import { DollarSign, TrendingUp, TrendingDown, PieChart, ShieldAlert, Cpu, Award, Globe, Flame, Newspaper, RefreshCw, AlertTriangle } from 'lucide-react';
 import { PositionItem, WatchlistItem } from '../types';
 import axios from 'axios';
@@ -46,6 +47,41 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const winnerPositions = positions.filter((p) => p.profit_loss > 0);
   const loserPositions = positions.filter((p) => p.profit_loss < 0);
+
+  // ECharts Pie Chart for Asset Weight Allocation
+  const pieChartOption = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#0F172A',
+      borderColor: '#334155',
+      textStyle: { color: '#F8FAFC', fontSize: 12 },
+      formatter: '{b}: ¥{c} ({d}%)'
+    },
+    series: [
+      {
+        name: '持仓市值占比',
+        type: 'pie',
+        radius: ['40%', '70%'],
+        avoidLabelOverlap: true,
+        itemStyle: {
+          borderRadius: 6,
+          borderColor: '#0F172A',
+          borderWidth: 2
+        },
+        label: {
+          show: true,
+          color: '#CBD5E1',
+          fontSize: 11,
+          formatter: '{b}\n{d}%'
+        },
+        data: positions.map((p) => ({
+          name: p.name,
+          value: Math.round(p.current_value)
+        }))
+      }
+    ]
+  };
 
   return (
     <div className="space-y-6">
@@ -279,15 +315,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
 
-        {/* Watchlist Quick View (1 col) */}
-        <div className="surface-card rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
-              <ShieldAlert className="w-5 h-5 text-amber-400" />
-              自选观察池预警
-            </h2>
-            <span className="text-xs text-slate-400">{watchlists.length} 只股票</span>
-          </div>
+        {/* Watchlist Quick View & Asset Weight Chart (1 col) */}
+        <div className="space-y-6">
+          {/* Asset Allocation Chart Card */}
+          {positions.length > 0 && (
+            <div className="surface-card rounded-2xl p-4 sm:p-5 space-y-2">
+              <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <PieChart className="w-4 h-4 text-indigo-400" />
+                <span>持仓资产市值占比分布</span>
+              </h2>
+              <div className="h-[200px] w-full">
+                <ReactECharts option={pieChartOption} style={{ height: '100%', width: '100%' }} />
+              </div>
+            </div>
+          )}
+
+          <div className="surface-card rounded-2xl p-4 sm:p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-amber-400" />
+                自选观察池预警
+              </h2>
+              <span className="text-xs text-slate-400">{watchlists.length} 只股票</span>
+            </div>
 
           <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
             {watchlists.length === 0 ? (
@@ -316,6 +366,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               ))
             )}
+          </div>
           </div>
         </div>
       </div>

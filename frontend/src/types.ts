@@ -94,16 +94,37 @@ export interface TradeRecordItem {
   amount: number;
   fee?: number;
   strategy_reason?: string;
+  is_planned?: boolean;
+  trade_tag?: string;
   trade_date: string;
   created_at: string;
 }
 
 export interface AgentMemoryItem {
   id: number;
-  memory_type: 'USER_HABIT' | 'LESSON_LEARNED' | 'TRADING_STYLE' | string;
+  memory_type: 'MASTER_PLAYBOOK' | 'USER_HABIT' | 'LESSON_LEARNED' | 'TRADING_STYLE' | 'SCREENING_RULE' | 'POSITION_RULE' | string;
   content: string;
   importance: number;
   source_info: string;
   created_at: string;
   updated_at: string;
 }
+
+export interface MasterPlaybookItem {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  importance: number;
+  is_activated?: boolean;
+}
+
+export interface PushConfigItem {
+  id?: number;
+  channel: 'serverchan' | 'pushplus' | 'wechat_work' | string;
+  has_key: boolean;
+  secret_key_masked: string;
+  is_enabled: boolean;
+  auto_push_review: boolean;
+}
+

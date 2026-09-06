@@ -6,18 +6,38 @@ import {
   Plus, Upload, Trash2, Clipboard, FileText, Check, Cpu, Sparkles, 
   Brain, ShieldAlert, TrendingUp, TrendingDown, RefreshCw, Layers, Calendar, MessageSquare,
   Search, Filter, X, Edit3, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  Send, Bot, User, CornerDownLeft
+  Send, Bot, User, CornerDownLeft, Award, Zap, BookOpen
 } from 'lucide-react';
-import { TradeRecordItem, AgentMemoryItem } from '../types';
+import { TradeRecordItem, AgentMemoryItem, MasterPlaybookItem } from '../types';
 
 interface TradeReviewTabProps {
   onSelectStock: (symbol: string) => void;
   onRefreshAll: () => void;
+  onOpenSettings?: () => void;
 }
 
-export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, onRefreshAll }) => {
+export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, onRefreshAll, onOpenSettings }) => {
+
   const [trades, setTrades] = useState<TradeRecordItem[]>([]);
-  const [stats, setStats] = useState({ total_trades: 0, buy_count: 0, sell_count: 0, total_buy_amount: 0, total_sell_amount: 0, realized_pnl: 0, net_cash_flow: 0, total_fees: 0, unmatched_sell_volume: 0 });
+  const [stats, setStats] = useState({
+    total_trades: 0,
+    buy_count: 0,
+    sell_count: 0,
+    total_buy_amount: 0,
+    total_sell_amount: 0,
+    realized_pnl: 0,
+    net_cash_flow: 0,
+    total_fees: 0,
+    unmatched_sell_volume: 0,
+    win_rate: 0,
+    profit_loss_ratio: 0,
+    expectancy: 0,
+    planned_ratio: 100,
+    total_closed_trades: 0
+  });
+
+  const [isPlannedTrade, setIsPlannedTrade] = useState(true);
+  const [tradeTag, setTradeTag] = useState('计划内执行');
   const [memories, setMemories] = useState<AgentMemoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -61,6 +81,54 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isMemoryModalOpen, setIsMemoryModalOpen] = useState(false);
 
+  // Master Playbook & Rule Extraction states
+  const [playbooks, setPlaybooks] = useState<MasterPlaybookItem[]>([]);
+  const [isExtractModalOpen, setIsExtractModalOpen] = useState(false);
+  const [extractArticleText, setExtractArticleText] = useState('');
+  const [extractArticleTitle, setExtractArticleTitle] = useState('');
+  const [isExtracting, setIsExtracting] = useState(false);
+
+  const fetchPlaybooks = async () => {
+    try {
+      const res = await axios.get('/api/v1/ai/agent/playbooks');
+      setPlaybooks(res.data || []);
+    } catch (err) {
+      console.error('Failed to fetch playbooks:', err);
+    }
+  };
+
+  const handleActivatePlaybook = async (playbookId: string) => {
+    try {
+      const res = await axios.post('/api/v1/ai/agent/playbooks/activate', { playbook_id: playbookId });
+      fetchPlaybooks();
+      fetchAgentMemories();
+    } catch (err) {
+      alert('激活战法失败');
+    }
+  };
+
+  const handleExtractRulesFromArticle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!extractArticleText.trim()) return;
+    setIsExtracting(true);
+    try {
+      const res = await axios.post('/api/v1/ai/agent/extract-rules', {
+        text: extractArticleText.trim(),
+        title: extractArticleTitle.trim() || '战法心得文章'
+      });
+      alert(`🎉 成功从文章中自动萃取出 ${res.data.extracted_rules.length} 条顶级战法规则，并注入 Agent 长期指导大脑！`);
+      setIsExtractModalOpen(false);
+      setExtractArticleText('');
+      setExtractArticleTitle('');
+      fetchPlaybooks();
+      fetchAgentMemories();
+    } catch (err) {
+      alert('萃取失败，请确认输入的战法文本长度与内容有效');
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
   // Form inputs for Trade
   const [symbol, setSymbol] = useState('');
   const [name, setName] = useState('');
@@ -82,12 +150,51 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isScreenerRunning, setIsScreenerRunning] = useState(false);
   const [agentReportMd, setAgentReportMd] = useState<string>('');
+  const [isPushingWeChat, setIsPushingWeChat] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  const handlePushToWeChat = async (contentToPush?: string, customTitle?: string) => {
+    const targetContent = contentToPush || agentReportMd;
+    if (!targetContent) {
+      alert('暂无复盘报告或对话分析内容，请先生成');
+      return;
+    }
+    setIsPushingWeChat(true);
+    try {
+      const res = await axios.post('/api/v1/ai/push-review', {
+        title: customTitle || '📊 AI 股票交易分析/复盘报告',
+        content_md: targetContent
+      });
+      if (res.data.status === 'success') {
+        alert('✅ 内容已成功推送至您的手机微信！');
+      } else {
+        if (confirm(`推送失败: ${res.data.detail || '未配置微信 SendKey 或 Token'}\n\n是否立即打开设置中心进行配置？`)) {
+          onOpenSettings?.();
+        }
+      }
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || err.message;
+      if (confirm(`推送失败: ${detail}\n\n是否立即打开系统设置配置微信 SendKey / Token？`)) {
+        onOpenSettings?.();
+      }
+    } finally {
+      setIsPushingWeChat(false);
+    }
+  };
+
+
 
   // Handle Start Stock Screener Agent
+
   const handleStartScreenerAgent = async () => {
     if (isScreenerRunning || isAgentRunning) return;
     setIsScreenerRunning(true);
     setAgentReportMd('🎯 **智能选股与策略推选 Agent 启动中**...\n正在基于您在记忆库中确立的【选股与建仓规则】，对自选股及持仓股票进行量化指标匹配与多维筛选...');
+    
+    // Auto scroll down to report section smoothly
+    setTimeout(() => {
+      reportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
 
     try {
       const response = await fetch('/api/v1/ai/screener/run-stream', { method: 'POST' });
@@ -107,10 +214,12 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       setTimeout(() => fetchAgentMemories(), 1000);
     } catch (err) {
       console.error('Screener Agent Stream Error:', err);
+      setAgentReportMd((prev) => prev + '\n\n[智能选股生成异常，请检查网络或 API Key 设置]');
     } finally {
       setIsScreenerRunning(false);
     }
   };
+
 
 
   const fetchTradeData = async () => {
@@ -147,13 +256,26 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
     }
   };
 
+  const fetchLatestReviewReport = async () => {
+    try {
+      const res = await axios.get('/api/v1/ai/reports/latest?report_type=TRADE_REVIEW_AGENT');
+      if (res.data.status === 'success' && res.data.report?.content_md) {
+        setAgentReportMd(res.data.report.content_md);
+      }
+    } catch (err) {
+      console.error('Failed to fetch latest review report:', err);
+    }
+  };
+
   useEffect(() => {
     fetchTradeData();
   }, [page, pageSize, searchTerm, tradeTypeFilter, startDate, endDate]);
 
   useEffect(() => {
     fetchAgentMemories();
+    fetchLatestReviewReport();
   }, []);
+
 
   // Reset to page 1 when filter/pageSize changes
   useEffect(() => {
@@ -297,7 +419,9 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
         price: parseFloat(price),
         volume: parseInt(volume),
         strategy_reason: strategyReason,
-        sync_to_position: syncToPosition
+        sync_to_position: syncToPosition,
+        is_planned: isPlannedTrade,
+        trade_tag: tradeTag
       });
       setIsAddModalOpen(false);
       setSymbol('');
@@ -424,38 +548,42 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   };
 
   // Trigger Trade Review Agent Stream
-  const handleStartAgentReview = () => {
+  const handleStartAgentReview = async () => {
+    if (isAgentRunning || isScreenerRunning) return;
     setIsAgentRunning(true);
-    setAgentReportMd('');
+    setAgentReportMd('🤖 **Trade Review Agent 诊断与反思复盘中**...\n正在对比大盘行情、领涨主线、个股均线与 K 线摆动指标，并结合记忆库中确立的操盘战法进行诊断...');
 
-    const eventSource = new EventSource('/api/v1/ai/agent/review-stream');
-    
-    // Using fetch/SSE polyfill style stream processing via axios post / native response
-    // For FastAPI streaming POST endpoint, we use fetch with ReadableStream reader
-    fetch('/api/v1/ai/agent/review-stream', { method: 'POST' })
-      .then(async (response) => {
-        if (!response.body) return;
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let done = false;
+    setTimeout(() => {
+      reportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
 
-        while (!done) {
-          const { value, done: doneReading } = await reader.read();
-          done = doneReading;
-          if (value) {
-            const chunkValue = decoder.decode(value, { stream: true });
-            setAgentReportMd((prev) => prev + chunkValue);
-          }
-        }
-        setIsAgentRunning(false);
-        // Refresh memory bank after review completes (agent auto evolution)
-        setTimeout(() => fetchAgentMemories(), 1000);
-      })
-      .catch((err) => {
-        console.error('Agent Stream Error:', err);
-        setIsAgentRunning(false);
-      });
+    try {
+      const response = await fetch('/api/v1/ai/agent/review-stream', { method: 'POST' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      if (!response.body) throw new Error('ReadableStream not supported');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let reportText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        reportText += chunk;
+        setAgentReportMd(reportText);
+      }
+      setTimeout(() => fetchAgentMemories(), 1000);
+    } catch (err: any) {
+      console.error('Agent Review Stream Error:', err);
+      setAgentReportMd((prev) => prev + `\n\n⚠️ [复盘生成失败: ${err.message || '生成中断'}，请检查网络或 API Key 设置]`);
+    } finally {
+      setIsAgentRunning(false);
+    }
   };
+
 
   return (
     <div className="space-y-6">
@@ -530,45 +658,158 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
               <span>💬 与 Agent 自由对话</span>
             </button>
 
+            <button
+              onClick={() => onOpenSettings?.()}
+              className="px-3.5 py-2 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 font-semibold text-xs rounded-xl shadow-lg transition-all flex items-center space-x-1.5"
+              title="配置 Server酱 / PushPlus 微信推送 Key"
+            >
+              <Send className="w-4 h-4 text-emerald-400" />
+              <span>📱 微信推送设置</span>
+            </button>
 
+
+            {agentReportMd && (
+              <button
+                onClick={() => reportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold rounded-xl transition-all flex items-center space-x-1 shadow-lg shadow-amber-500/10"
+              >
+                <span>查看下方报告 ↓</span>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Trade Metrics Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5 pt-4 border-t border-slate-800/80">
+
+        {/* Trade Quantitative Metrics Banner */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 mt-5 pt-4 border-t border-slate-800/80">
           <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
-            <div className="text-[11px] text-slate-400">总交易笔数</div>
-            <div className="text-lg font-bold font-mono text-slate-100 mt-1">{stats.total_trades} 笔</div>
-          </div>
-          <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
-            <div className="text-[11px] text-slate-400">买入/卖出结构</div>
-            <div className="text-sm font-semibold font-mono text-slate-200 mt-1 flex items-center space-x-2">
-              <span className="text-emerald-400">买入 {stats.buy_count}</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-red-400">卖出 {stats.sell_count}</span>
+            <div className="text-[11px] text-slate-400">总交易 / 结构</div>
+            <div className="text-base font-bold font-mono text-slate-100 mt-1">{stats.total_trades} 笔</div>
+            <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
+              买{stats.buy_count} | 卖{stats.sell_count}
             </div>
           </div>
+
           <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
-            <div className="text-[11px] text-slate-400">已实现盈亏（FIFO）</div>
-            <div className={`text-lg font-bold font-mono mt-1 ${stats.realized_pnl >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+            <div className="text-[11px] text-slate-400">已实现盈亏 (FIFO)</div>
+            <div className={`text-base font-bold font-mono mt-1 ${stats.realized_pnl >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>
               {stats.realized_pnl >= 0 ? '+' : ''}¥{stats.realized_pnl.toLocaleString()}
             </div>
-            <div className="mt-0.5 text-[10px] text-slate-500">费用 ¥{stats.total_fees.toLocaleString()}</div>
-            {stats.unmatched_sell_volume > 0 && <div className="mt-1 text-[10px] text-amber-300">{stats.unmatched_sell_volume} 股卖出缺少可匹配成本，不计入盈亏</div>}
+            <div className="text-[10px] text-slate-500 mt-0.5">费用 ¥{stats.total_fees.toLocaleString()}</div>
           </div>
+
+          <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
+            <div className="text-[11px] text-slate-400">平仓胜率 (Win Rate)</div>
+            <div className="text-base font-bold font-mono text-amber-300 mt-1">
+              {stats.win_rate.toFixed(1)}%
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">共 {stats.total_closed_trades || 0} 笔完全平仓</div>
+          </div>
+
+          <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
+            <div className="text-[11px] text-slate-400">盈亏比 (P/L Ratio)</div>
+            <div className="text-base font-bold font-mono text-indigo-300 mt-1">
+              {stats.profit_loss_ratio.toFixed(2)}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">平均盈利 / 平均亏损</div>
+          </div>
+
+          <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
+            <div className="text-[11px] text-slate-400">单笔期望收益</div>
+            <div className={`text-base font-bold font-mono mt-1 ${stats.expectancy >= 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+              {stats.expectancy >= 0 ? '+' : ''}¥{stats.expectancy.toFixed(2)}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">每笔数学期望收益</div>
+          </div>
+
           <div className="bg-slate-950/60 rounded-xl p-3 border border-slate-800/60">
             <div className="text-[11px] text-slate-400 flex items-center justify-between">
-              <span>Agent 已进化记忆</span>
+              <span>计划执行率</span>
               <button onClick={() => setIsMemoryModalOpen(true)} className="text-indigo-400 hover:underline text-[10px]">
-                +添加
+                记忆({memories.length})
               </button>
             </div>
-            <div className="text-lg font-bold font-mono text-purple-300 mt-1">
-              {memories.length} 条经验积累
+            <div className="text-base font-bold font-mono text-purple-300 mt-1">
+              {stats.planned_ratio.toFixed(1)}%
             </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">计划内严格执行占比</div>
           </div>
         </div>
       </div>
+
+
+      {/* Preset Master Strategy Playbooks Banner */}
+      <div className="surface-card bg-gradient-to-br from-amber-950/20 via-slate-900 to-slate-950 border border-amber-500/30 rounded-2xl p-5 space-y-3 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-500/20 pb-3">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-slate-950 shadow-md">
+              <Award className="w-4 h-4 font-bold" />
+            </div>
+            <div>
+              <h3 className="font-bold text-sm text-amber-200 flex items-center gap-2">
+                <span>🏆 顶尖交易战法与规则注入系统 (Master Playbooks)</span>
+                <span className="px-2 py-0.5 text-[9px] font-extrabold bg-amber-500 text-slate-950 rounded-full uppercase">
+                  LLM 最高优先级脑区
+                </span>
+              </h3>
+              <p className="text-[11px] text-amber-300/70 mt-0.5">
+                一键向 Agent 注入顶尖大师战法或粘贴炒股心得，要求复盘与选股时【强制严格对标】
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setIsExtractModalOpen(true)}
+            className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center space-x-1.5 self-start sm:self-auto"
+          >
+            <Sparkles className="w-4 h-4 text-slate-950" />
+            <span>✨ 粘贴心得/秘籍 AI 自动萃取</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+          {playbooks.map((pb) => (
+            <div 
+              key={pb.id} 
+              className={`p-3.5 rounded-xl border transition-all flex flex-col justify-between space-y-2.5 ${
+                pb.is_activated 
+                  ? 'bg-gradient-to-b from-amber-950/50 to-slate-950 border-amber-500/60 shadow-md shadow-amber-500/10' 
+                  : 'bg-slate-950/80 border-slate-800 hover:border-amber-500/40'
+              }`}
+            >
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-amber-300 truncate pr-1">
+                    {pb.name}
+                  </span>
+                  {pb.is_activated && (
+                    <span className="px-1.5 py-0.5 text-[9px] font-extrabold bg-amber-500 text-slate-950 rounded flex-shrink-0">
+                      已生效
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-300 line-clamp-2 leading-relaxed font-sans">
+                  {pb.description}
+                </p>
+              </div>
+
+              <button
+                onClick={() => handleActivatePlaybook(pb.id)}
+                disabled={pb.is_activated}
+                className={`w-full py-1.5 px-2 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center space-x-1 ${
+                  pb.is_activated 
+                    ? 'bg-amber-950/80 text-amber-400/70 border border-amber-800/40 cursor-default' 
+                    : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40'
+                }`}
+              >
+                <Zap className="w-3 h-3 text-amber-400" />
+                <span>{pb.is_activated ? '已激活至 Agent 指导库' : '⚡ 一键激活注入'}</span>
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
 
       {/* Main Content Grid (Trade Log + Agent Memory Vault) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -707,11 +948,18 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                       </td>
                       <td className="py-3 px-3">
                         <div className="font-mono text-slate-400">{t.trade_date.split(' ')[0]}</div>
-                        <span className={`inline-block mt-0.5 px-1.5 py-0.5 text-[10px] font-bold rounded ${
-                          t.trade_type === 'BUY' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/50' : 'bg-red-950 text-red-300 border border-red-800/50'
-                        }`}>
-                          {t.trade_type === 'BUY' ? '买入建仓' : '卖出止盈/损'}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                          <span className={`inline-block px-1.5 py-0.5 text-[10px] font-bold rounded ${
+                            t.trade_type === 'BUY' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/50' : 'bg-red-950 text-red-300 border border-red-800/50'
+                          }`}>
+                            {t.trade_type === 'BUY' ? '买入建仓' : '卖出止盈/损'}
+                          </span>
+                          <span className={`inline-block px-1.5 py-0.5 text-[9px] font-semibold rounded ${
+                            t.is_planned !== false ? 'bg-indigo-950 text-indigo-300 border border-indigo-800/40' : 'bg-amber-950 text-amber-300 border border-amber-800/40'
+                          }`}>
+                            {t.trade_tag || (t.is_planned !== false ? '计划内' : '冲动交易')}
+                          </span>
+                        </div>
                       </td>
 
                       <td 
@@ -832,68 +1080,104 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
             <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
                 <Brain className="w-4 h-4 text-purple-400" />
-                <span>Agent 进化记忆档案库</span>
+                <span>Agent 进化记忆与指导规则库</span>
               </h3>
-              <button
-                onClick={() => setIsMemoryModalOpen(true)}
-                className="px-2 py-1 bg-purple-950 hover:bg-purple-900 border border-purple-800/50 text-purple-300 text-[11px] rounded-lg font-medium"
-              >
-                + 手动添加
-              </button>
+              <div className="flex items-center space-x-1.5">
+                <button
+                  onClick={() => setIsExtractModalOpen(true)}
+                  className="px-2 py-1 bg-amber-950 hover:bg-amber-900 border border-amber-700/50 text-amber-300 text-[11px] rounded-lg font-semibold flex items-center gap-1"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  <span>AI 萃取</span>
+                </button>
+                <button
+                  onClick={() => setIsMemoryModalOpen(true)}
+                  className="px-2 py-1 bg-purple-950 hover:bg-purple-900 border border-purple-800/50 text-purple-300 text-[11px] rounded-lg font-medium"
+                >
+                  + 手动
+                </button>
+              </div>
             </div>
 
             <p className="text-[11px] text-slate-400 mb-3">
-              Agent 在每次复盘时会自动提炼您的性格偏好与习惯教训，保存在下方。下一次对话时将注入上下文：
+              包含激活的顶级战法与 AI 从对话/复盘中提炼的记忆。LLM 生成报告时将最高优先级对标：
             </p>
 
-            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+            <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
               {memories.length === 0 ? (
                 <div className="text-center py-6 text-slate-500 text-xs">
-                  Agent 记忆库尚空。进行一次“召唤 Agent 交易复盘”后将自动开始积累进化！
+                  Agent 记忆库尚空。请一键激活战法，或进行一次“召唤 Agent 交易复盘”自动积累！
                 </div>
               ) : (
                 memories.map((m) => (
-                  <div key={m.id} className="bg-slate-950 border border-slate-800/80 rounded-xl p-3 space-y-1.5 relative group">
-                    <div className="flex items-center justify-between">
-                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
-                        m.memory_type === 'SCREENING_RULE'
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/40'
-                          : (m.memory_type === 'POSITION_RULE'
-                            ? 'bg-sky-950 text-sky-300 border border-sky-800/40'
-                            : (m.memory_type === 'LESSON_LEARNED'
-                              ? 'bg-amber-950 text-amber-300 border border-amber-800/40'
-                              : (m.memory_type === 'TRADING_STYLE'
-                                ? 'bg-purple-950 text-purple-300 border border-purple-800/40'
-                                : 'bg-indigo-950 text-indigo-300 border border-indigo-800/40')))
-                      }`}>
-                        {m.memory_type === 'SCREENING_RULE' ? '🎯 选股规则' : (
-                          m.memory_type === 'POSITION_RULE' ? '🛡️ 建仓规则' : (
-                            m.memory_type === 'LESSON_LEARNED' ? '教训反思' : (
-                              m.memory_type === 'TRADING_STYLE' ? '交易风格' : '习惯偏好'
-                            )
-                          )
-                        )}
-                      </span>
+                  m.memory_type === 'MASTER_PLAYBOOK' ? (
+                    <div key={m.id} className="bg-gradient-to-r from-amber-950/40 to-slate-950 border border-amber-500/50 rounded-xl p-3 space-y-1.5 relative group shadow-md shadow-amber-950/20">
+                      <div className="flex items-center justify-between">
+                        <span className="px-2 py-0.5 text-[10px] font-extrabold rounded bg-amber-500 text-slate-950 flex items-center gap-1">
+                          <Award className="w-3 h-3" />
+                          <span>🏆 顶级战法 (最高优先级)</span>
+                        </span>
 
-                      <button
-                        onClick={() => handleDeleteMemory(m.id)}
-                        className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-all text-xs"
-                        title="擦除此条记忆"
-                      >
-                        ✕
-                      </button>
+                        <button
+                          onClick={() => handleDeleteMemory(m.id)}
+                          className="opacity-0 group-hover:opacity-100 text-amber-300/70 hover:text-red-400 transition-all text-xs"
+                          title="擦除此战法"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <p className="text-xs text-amber-100 leading-relaxed font-semibold">
+                        {m.content}
+                      </p>
+                      <div className="text-[10px] text-amber-300/80 flex items-center justify-between pt-1 font-mono">
+                        <span>{m.source_info}</span>
+                        <span className="font-bold text-amber-400">权重: 5/5</span>
+                      </div>
                     </div>
-                    <p className="text-xs text-slate-200 leading-relaxed font-medium">
-                      {m.content}
-                    </p>
-                    <div className="text-[10px] text-slate-500 flex items-center justify-between pt-1">
-                      <span>{m.source_info}</span>
-                      <span className="font-mono text-purple-400">重要度: {m.importance}/5</span>
+                  ) : (
+                    <div key={m.id} className="bg-slate-950 border border-slate-800/80 rounded-xl p-3 space-y-1.5 relative group">
+                      <div className="flex items-center justify-between">
+                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                          m.memory_type === 'SCREENING_RULE'
+                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/40'
+                            : (m.memory_type === 'POSITION_RULE'
+                              ? 'bg-sky-950 text-sky-300 border border-sky-800/40'
+                              : (m.memory_type === 'LESSON_LEARNED'
+                                ? 'bg-amber-950 text-amber-300 border border-amber-800/40'
+                                : (m.memory_type === 'TRADING_STYLE'
+                                  ? 'bg-purple-950 text-purple-300 border border-purple-800/40'
+                                  : 'bg-indigo-950 text-indigo-300 border border-indigo-800/40')))
+                        }`}>
+                          {m.memory_type === 'SCREENING_RULE' ? '🎯 选股规则' : (
+                            m.memory_type === 'POSITION_RULE' ? '🛡️ 建仓规则' : (
+                              m.memory_type === 'LESSON_LEARNED' ? '教训反思' : (
+                                m.memory_type === 'TRADING_STYLE' ? '交易风格' : '习惯偏好'
+                              )
+                            )
+                          )}
+                        </span>
+
+                        <button
+                          onClick={() => handleDeleteMemory(m.id)}
+                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-all text-xs"
+                          title="擦除此条记忆"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-200 leading-relaxed font-medium">
+                        {m.content}
+                      </p>
+                      <div className="text-[10px] text-slate-500 flex items-center justify-between pt-1">
+                        <span>{m.source_info}</span>
+                        <span className="font-mono text-purple-400">重要度: {m.importance}/5</span>
+                      </div>
                     </div>
-                  </div>
+                  )
                 ))
               )}
             </div>
+
           </div>
 
           <div className="bg-purple-950/30 border border-purple-900/40 rounded-xl p-3 text-[11px] text-purple-300">
@@ -903,20 +1187,45 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       </div>
 
       {/* Streamed Agent Review Section */}
-      {(agentReportMd || isAgentRunning) && (
-        <div className="bg-slate-900 border border-purple-900/50 rounded-2xl p-6 shadow-2xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-amber-400" />
-              <span>Trade Review Agent 诊断与反思报告</span>
-            </h3>
-            {isAgentRunning && (
-              <span className="text-xs text-purple-300 flex items-center gap-2 font-mono">
-                <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
-                Agent 结合记忆思考进化中...
-              </span>
-            )}
-          </div>
+      <div ref={reportRef} className="scroll-mt-6">
+        {(agentReportMd || isAgentRunning || isScreenerRunning) && (
+          <div className="bg-slate-900 border border-purple-900/50 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
+                {isScreenerRunning || agentReportMd.includes('智能选股') || agentReportMd.includes('Screener') ? (
+                  <>
+                    <Cpu className="w-5 h-5 text-emerald-400" />
+                    <span>🎯 Stock & ETF Screener Agent 智能选股推荐报告</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5 text-amber-400" />
+                    <span>🤖 Trade Review Agent 诊断与反思报告</span>
+                  </>
+                )}
+              </h3>
+              <div className="flex items-center gap-2">
+                {agentReportMd && !isAgentRunning && !isScreenerRunning && (
+                  <button
+                    onClick={() => handlePushToWeChat()}
+                    disabled={isPushingWeChat}
+
+                    className="px-3 py-1.5 bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-md"
+                  >
+                    <Send className={`w-3.5 h-3.5 ${isPushingWeChat ? 'animate-pulse' : ''}`} />
+                    <span>{isPushingWeChat ? '发送中...' : '📱 发送至微信'}</span>
+                  </button>
+                )}
+                {(isAgentRunning || isScreenerRunning) && (
+                  <span className="text-xs text-purple-300 flex items-center gap-2 font-mono">
+                    <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
+                    {isScreenerRunning ? '智能选股 Agent 多维指标匹配中...' : 'Agent 结合记忆思考进化中...'}
+                  </span>
+                )}
+              </div>
+
+            </div>
+
 
           <div className="max-w-none text-sm text-slate-200 leading-relaxed">
             <ReactMarkdown
@@ -973,9 +1282,11 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
               {agentReportMd}
             </ReactMarkdown>
           </div>
-
         </div>
       )}
+    </div>
+
+
 
       {/* Modal 1: Add Single Trade */}
       {isAddModalOpen && (
@@ -1069,6 +1380,30 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                   onChange={(e) => setStrategyReason(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-100"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">交易执行属性 (防范计划外冲动交易)</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setIsPlannedTrade(true); setTradeTag('计划内执行'); }}
+                    className={`py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                      isPlannedTrade ? 'bg-indigo-950 border-indigo-500 text-indigo-300 font-bold' : 'bg-slate-950 text-slate-400 border-slate-800'
+                    }`}
+                  >
+                    📋 计划内执行
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIsPlannedTrade(false); setTradeTag('计划外冲动'); }}
+                    className={`py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                      !isPlannedTrade ? 'bg-amber-950 border-amber-500 text-amber-300 font-bold' : 'bg-slate-950 text-slate-400 border-slate-800'
+                    }`}
+                  >
+                    ⚠️ 计划外冲动
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center space-x-2 pt-1">
@@ -1322,9 +1657,14 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                 <div>
                   <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                     <span>Trade Review Coach Agent (AI 交易教练对话室)</span>
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span className="px-2 py-0.5 text-[9px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      联网行情与新闻已在线
+                    </span>
                   </h3>
-                  <p className="text-[11px] text-slate-400">已实时同步你的 <strong>{stats.total_trades} 笔交割单</strong> 与 <strong>{memories.length} 条进化的认知记忆</strong></p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    已实时同步 <strong>持仓/交割单</strong>、<strong>{memories.length}条认知战法</strong> 及 <strong>📡 大盘实时指数、热点板块与大盘新闻</strong>
+                  </p>
                 </div>
               </div>
               <button
@@ -1339,27 +1679,28 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
             <div className="px-4 py-2 bg-slate-950/40 border-b border-slate-800/80 flex items-center gap-2 overflow-x-auto text-[11px]">
               <span className="text-slate-500 flex-shrink-0">💡 快捷问诊:</span>
               <button
+                onClick={() => handleSendChatMessage('分析 600519 (贵州茅台) 今日实时价格、均线与 MACD/KDJ 技术指标研判')}
+                disabled={isChatStreaming}
+                className="px-2.5 py-1 bg-amber-950/60 hover:bg-amber-900 text-amber-300 border border-amber-800/40 rounded-full flex-shrink-0 transition-colors"
+              >
+                📈 研判 600519 实时 K 线与指标
+              </button>
+              <button
+                onClick={() => handleSendChatMessage('结合今日全市场大盘指数与领涨热点板块，评估我当前持仓的整体风险')}
+                disabled={isChatStreaming}
+                className="px-2.5 py-1 bg-emerald-950/60 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/40 rounded-full flex-shrink-0 transition-colors"
+              >
+                🌐 点评大盘指数与热点共振
+              </button>
+              <button
                 onClick={() => handleSendChatMessage('分析我近期的交易日志，指出我最严重的操作盲点是什么？')}
                 disabled={isChatStreaming}
                 className="px-2.5 py-1 bg-indigo-950/60 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/40 rounded-full flex-shrink-0 transition-colors"
               >
                 🎯 诊断我最严重的操作盲点
               </button>
-              <button
-                onClick={() => handleSendChatMessage('对比我的买入与卖出策略，我的仓位与止损控制得怎么样？')}
-                disabled={isChatStreaming}
-                className="px-2.5 py-1 bg-purple-950/60 hover:bg-purple-900 text-purple-300 border border-purple-800/40 rounded-full flex-shrink-0 transition-colors"
-              >
-                ⚖️ 评估仓位控制与止损纪律
-              </button>
-              <button
-                onClick={() => handleSendChatMessage('结合我的性格风格与记忆教训，给我 3 条可直接落地执行的改进建议。')}
-                disabled={isChatStreaming}
-                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-full flex-shrink-0 transition-colors"
-              >
-                📝 给出 3 条可落地改进建议
-              </button>
             </div>
+
 
             {/* Chat Messages Body */}
             <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-slate-950/20 font-sans">
@@ -1390,15 +1731,33 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                     {msg.role === 'user' ? (
                       <div>{msg.content}</div>
                     ) : (
-                      <div className="prose prose-invert prose-xs max-w-none">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {msg.content || '...'}
-                        </ReactMarkdown>
+                      <div className="space-y-2">
+                        <div className="prose prose-invert prose-xs max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {(msg.content || '...').replace('[WECHAT_PUSH_REQUESTED]', '').trim()}
+                          </ReactMarkdown>
+                        </div>
+                        {msg.content && msg.content.length > 10 && (
+                          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-end">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const cleanContent = msg.content.replace('[WECHAT_PUSH_REQUESTED]', '').trim();
+                                handlePushToWeChat(cleanContent);
+                              }}
+                              className="px-2 py-0.5 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/50 rounded-lg text-[10px] font-semibold flex items-center space-x-1 transition-all"
+                            >
+                              <Send className="w-3 h-3 text-emerald-400" />
+                              <span>📱 推送此总结到微信</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
               ))}
+
               <div ref={chatMessagesEndRef} />
             </div>
 
@@ -1433,6 +1792,69 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
           </div>
         </div>
       )}
+
+      {/* Modal 6: AI Article Rule Extraction */}
+      {isExtractModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="surface-card rounded-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-amber-500/30">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-sm text-amber-200 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <span>✨ 粘贴心得/秘籍 AI 自动萃取战法规则</span>
+              </h3>
+              <button onClick={() => setIsExtractModalOpen(false)} className="text-slate-400 hover:text-slate-200">✕</button>
+            </div>
+
+            <form onSubmit={handleExtractRulesFromArticle} className="space-y-3">
+              <p className="text-xs text-slate-400 leading-relaxed">
+                粘贴任意高质量的**游资交易心法、网文心得、大牛招式、或书籍战法**。LLM 大模型将自动提炼出 1-3 条严格的【买点、止损、仓位风控】法则，并直接存入 Agent 最高优先级脑区！
+              </p>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1 font-medium">文章/心得标题 (可选)</label>
+                <input
+                  type="text"
+                  placeholder="例如: 游资养家心法 / 龙头分歧低吸秘籍"
+                  value={extractArticleTitle}
+                  onChange={(e) => setExtractArticleTitle(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1 font-medium">文章/心得正文内容</label>
+                <textarea
+                  rows={6}
+                  placeholder="在这里粘贴你认为真正厉害的交易模式、招式文章或操盘心得..."
+                  value={extractArticleText}
+                  onChange={(e) => setExtractArticleText(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-100 focus:outline-none focus:border-amber-500 font-sans leading-relaxed"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsExtractModalOpen(false)}
+                  className="px-4 py-2 bg-slate-800 text-slate-300 text-xs rounded-xl hover:bg-slate-700"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={isExtracting || !extractArticleText.trim()}
+                  className="px-5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 flex items-center space-x-1.5 transition-all"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-slate-950" />
+                  <span>{isExtracting ? 'AI 大模型深度萃取中...' : '开始萃取并注入 Agent 脑区'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

@@ -96,6 +96,8 @@ class TradeRecord(Base):
     trade_date = Column(DateTime, default=bj_now)
     fee = Column(Float, default=0.0)
     strategy_reason = Column(Text, nullable=True)  # 交易买卖理由/心得总结
+    is_planned = Column(Boolean, default=True)      # 是否为计划内交易
+    trade_tag = Column(String, default="计划内执行")  # 交易标签 (如: 突破买入/回调建仓/冲动追高/止损出局)
     created_at = Column(DateTime, default=bj_now)
 
 class AgentMemory(Base):
@@ -110,6 +112,33 @@ class AgentMemory(Base):
     created_at = Column(DateTime, default=bj_now)
     updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
 
+class PushConfig(Base):
+    __tablename__ = "push_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel = Column(String, default="serverchan", index=True)  # serverchan | pushplus | wechat_work
+    secret_key = Column(String, nullable=True)  # SendKey / Token / Webhook URL
+    is_enabled = Column(Boolean, default=False)
+    auto_push_review = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Ensure missing columns exist for SQLite schema backward compatibility
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE trade_records ADD COLUMN is_planned BOOLEAN DEFAULT 1;"))
+            conn.commit()
+    except Exception:
+        pass
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE trade_records ADD COLUMN trade_tag VARCHAR DEFAULT '计划内执行';"))
+            conn.commit()
+    except Exception:
+        pass
+
+

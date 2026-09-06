@@ -115,11 +115,13 @@ export const Header: React.FC<HeaderProps> = ({
 
         <button
           onClick={onOpenSettings}
-          className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition-colors"
+          className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 rounded-lg border border-indigo-700/60 transition-all shadow"
+          title="配置 AI 模型 API Key 与 微信消息推送"
         >
-          <Settings className="w-4 h-4" />
-          <span>设置 API</span>
+          <Settings className="w-4 h-4 text-indigo-400" />
+          <span>⚙️ 系统设置 (API / 微信)</span>
         </button>
+
       </div>
       </div>
     </header>

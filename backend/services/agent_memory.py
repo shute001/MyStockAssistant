@@ -11,6 +11,37 @@ class AgentMemoryService:
 
     AGENT_NAME = "TradeReviewAgent"
 
+    PRESET_PLAYBOOKS = [
+        {
+            "id": "CANSLIM_BREAKOUT",
+            "name": "🏆 欧奈尔 CANSLIM / 趋势突破战法",
+            "description": "基于威廉·欧奈尔 CANSLIM 系统，专注高相对强度(RS)与形态放量突破，坚决设7%无条件止损。",
+            "content": "【顶级战法: 欧奈尔 CANSLIM 突破战法】1. 仅买入相对强度 RS>80 且形成放量突破（放量>50%）箱体或杯柄形态的标的；2. 严格执行 7% 无条件硬止损；3. 盈利达 20% 前不轻易止盈；4. 大盘处于下跌趋势时空仓或轻仓防守。",
+            "importance": 5
+        },
+        {
+            "id": "LEADER_DIVERGENCE_DIP",
+            "name": "🚀 主线龙头与分歧低吸战法",
+            "description": "聚焦 A 股市场当期成交量前两名的核心主线题材，只在分歧日缩量低吸龙头股，拒绝跟风后排。",
+            "content": "【顶级战法: 主线龙头分歧低吸战法】1. 严格锁定全市场当期热点与资金流向排名前二的主线题材；2. 绝不在加速连板日追高，仅在主线分歧缩量回踩 5日/10日均线确认支撑时低吸；3. 坚决不上车无题材支撑的后排跟风股票。",
+            "importance": 5
+        },
+        {
+            "id": "MA_TREND_PULLBACK",
+            "name": "📈 均线多头与趋势回踩战法",
+            "description": "右侧顺势交易，要求 MA5/10/20 均线多头排列且零轴上方 MACD 金叉，仅在回踩 20 日线时分批建仓。",
+            "content": "【顶级战法: 均线多头趋势回踩战法】1. 买入前提：日 K 线 MA5 > MA10 > MA20 多头排列，且 MACD 运行于零轴上方；2. 最佳买点：缩量回踩 20 日均线不破且出现止跌 K 线时分批建仓；3. 跌破 20 日均线且 3 日内无法收复则止损。",
+            "importance": 5
+        },
+        {
+            "id": "HIGH_DIVIDEND_DEFENSE",
+            "name": "🛡️ PB-ROE 高股息防御战法",
+            "description": "防御型价值战法，挑选股息率>5%、自由现金流充沛的红利标的，在股息分红季前低估值配置。",
+            "content": "【顶级战法: PB-ROE 高股息防御战法】1. 选股标准：股息率 > 5%，近三年 ROE > 12%，资产负债率可控且自由现金流充沛；2. 交易买点：股价位于历史估值低位分批逢低吸纳；3. 卖出信号：股息率因股价暴涨降至 3% 以下或基本面恶化。",
+            "importance": 5
+        }
+    ]
+
     @classmethod
     def get_all_memories(cls, db: Session, limit: int = 50) -> List[Dict[str, Any]]:
         """Fetch all stored memories for TradeReviewAgent"""
@@ -33,26 +64,26 @@ class AgentMemoryService:
 
     @classmethod
     def format_memories_for_prompt(cls, db: Session) -> str:
-        """Format memories into a structured text prompt block for LLM system prompt injection"""
-        memories = cls.get_all_memories(db, limit=30)
+        """Format memories into a structured text prompt block with MASTER_PLAYBOOK prioritized"""
+        memories = cls.get_all_memories(db, limit=40)
         if not memories:
             return "（暂无历史认知与筛选规则积累。请认真观察用户的交易行为与选股偏好并萃取规则。）"
 
-        lines = ["## 🧠 Agent 已掌握的用户习惯、经验与【选股/建仓规则库】:"]
-        for idx, m in enumerate(memories, 1):
-            m_type = m["memory_type"]
-            if m_type == "SCREENING_RULE":
-                type_label = "【选股与筛选规则】"
-            elif m_type == "POSITION_RULE":
-                type_label = "【建仓/风控规则】"
-            elif m_type == "LESSON_LEARNED":
-                type_label = "【教训总结】"
-            elif m_type == "TRADING_STYLE":
-                type_label = "【交易风格】"
-            else:
-                type_label = "【交易偏好/习惯】"
+        playbooks = [m for m in memories if m["memory_type"] == "MASTER_PLAYBOOK"]
+        other_mems = [m for m in memories if m["memory_type"] != "MASTER_PLAYBOOK"]
 
-            lines.append(f"{idx}. {type_label} (重要度:{m['importance']}/5): {m['content']} [来源: {m['source_info']}]")
+        lines = ["## 🧠 Agent 核心指导思想与【顶尖交易战法与规则库 (Master Playbooks)】:"]
+        if playbooks:
+            lines.append("=== 🏆 必须严格对标与恪守的【顶级战法与规则】 (最高优先级) ===")
+            for idx, m in enumerate(playbooks, 1):
+                lines.append(f"{idx}. {m['content']} [权重:{m['importance']}/5, 来源:{m['source_info']}]")
+        else:
+            lines.append("（尚未激活顶尖战法卡片，建议提示用户在界面中一键激活 CANSLIM/龙头低吸/均线趋势战法）")
+
+        if other_mems:
+            lines.append("\n=== 📌 个人历史习惯、教训与经验积累 ===")
+            for idx, m in enumerate(other_mems, 1):
+                lines.append(f"{idx}. [{m['memory_type']}] {m['content']} (重要度:{m['importance']}/5)")
 
         return "\n".join(lines)
 
