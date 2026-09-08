@@ -137,6 +137,8 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   const [volume, setVolume] = useState('');
   const [strategyReason, setStrategyReason] = useState('');
   const [syncToPosition, setSyncToPosition] = useState(true);
+  const [tradeDate, setTradeDate] = useState('');
+  const [tradeTime, setTradeTime] = useState('');
 
   // Form input for Memory
   const [memContent, setMemContent] = useState('');
@@ -374,6 +376,20 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
     }
   };
 
+  const handleClearAllTrades = async () => {
+    if (!confirm('【高危警告】确定要彻底清空数据库中的【所有历史交易记录】吗？\n清空后操作无法撤销，清空完成即可全新重新导入交割单。')) return;
+    try {
+      await axios.post('/api/v1/trades/clear-all');
+      setSelectedIds([]);
+      fetchTradeData();
+      onRefreshAll();
+      alert('✅ 已成功清空所有历史交易记录！您现在可以重新导入交割单。');
+    } catch (err) {
+      alert('清空交易记录失败');
+    }
+  };
+
+
   const handleResetFilters = () => {
     setSearchTerm('');
     setTradeTypeFilter('ALL');
@@ -407,11 +423,25 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
 
 
+  const handleOpenAddModal = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    setTradeDate(`${year}-${month}-${day}`);
+    setTradeTime(`${hours}:${minutes}:${seconds}`);
+    setIsAddModalOpen(true);
+  };
+
   // Handle Add Trade
   const handleAddTrade = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!symbol || !price || !volume) return;
     try {
+      const finalTradeDate = tradeDate ? (tradeTime ? `${tradeDate} ${tradeTime}` : tradeDate) : undefined;
       await axios.post('/api/v1/trades', {
         symbol,
         name: name || undefined,
@@ -419,6 +449,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
         price: parseFloat(price),
         volume: parseInt(volume),
         strategy_reason: strategyReason,
+        trade_date: finalTradeDate,
         sync_to_position: syncToPosition,
         is_planned: isPlannedTrade,
         trade_tag: tradeTag
@@ -609,7 +640,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
           <div className="flex flex-wrap items-center gap-3">
             <button
-              onClick={() => setIsAddModalOpen(true)}
+              onClick={handleOpenAddModal}
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/20 transition-all flex items-center space-x-1.5"
             >
               <Plus className="w-4 h-4" />
@@ -622,6 +653,15 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
             >
               <Clipboard className="w-4 h-4" />
               <span>导入交割单</span>
+            </button>
+
+            <button
+              onClick={handleClearAllTrades}
+              className="px-3.5 py-2 bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/50 font-medium text-xs rounded-xl transition-all flex items-center space-x-1.5"
+              title="清空数据库中所有历史交易记录，方便全新重新导入"
+            >
+              <Trash2 className="w-4 h-4 text-rose-400" />
+              <span>清空交易记录</span>
             </button>
 
             <button
@@ -919,11 +959,12 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                       className="rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-0 cursor-pointer"
                     />
                   </th>
-                  <th className="py-2.5 px-3">日期/类型</th>
+                  <th className="py-2.5 px-3">成交时间</th>
+                  <th className="py-2.5 px-3 text-center">操作</th>
                   <th className="py-2.5 px-3">股票名称/代码</th>
                   <th className="py-2.5 px-3 text-right">成交价</th>
-                  <th className="py-2.5 px-3 text-right">数量</th>
-                  <th className="py-2.5 px-3 text-right">总金额</th>
+                  <th className="py-2.5 px-3 text-right">成交数量</th>
+                  <th className="py-2.5 px-3 text-right">成交金额</th>
                   <th className="py-2.5 px-3">买卖理由与交易心得</th>
                   <th className="py-2.5 px-3 text-center">操作</th>
                 </tr>
@@ -946,20 +987,23 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                           className="rounded border-slate-700 bg-slate-950 text-indigo-600 focus:ring-0 cursor-pointer"
                         />
                       </td>
-                      <td className="py-3 px-3">
-                        <div className="font-mono text-slate-400">{t.trade_date.split(' ')[0]}</div>
-                        <div className="flex flex-wrap items-center gap-1 mt-0.5">
-                          <span className={`inline-block px-1.5 py-0.5 text-[10px] font-bold rounded ${
-                            t.trade_type === 'BUY' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/50' : 'bg-red-950 text-red-300 border border-red-800/50'
-                          }`}>
-                            {t.trade_type === 'BUY' ? '买入建仓' : '卖出止盈/损'}
-                          </span>
-                          <span className={`inline-block px-1.5 py-0.5 text-[9px] font-semibold rounded ${
-                            t.is_planned !== false ? 'bg-indigo-950 text-indigo-300 border border-indigo-800/40' : 'bg-amber-950 text-amber-300 border border-amber-800/40'
-                          }`}>
-                            {t.trade_tag || (t.is_planned !== false ? '计划内' : '冲动交易')}
-                          </span>
-                        </div>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <div className="font-mono text-slate-200 text-xs">{t.trade_date || '-'}</div>
+                      </td>
+
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
+                        <span className={`inline-block px-2.5 py-0.5 text-xs font-bold rounded-md ${
+                          t.trade_type === 'BUY' 
+                            ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/60' 
+                            : 'bg-rose-950/80 text-rose-400 border border-rose-800/60'
+                        }`}>
+                          {t.trade_type === 'BUY' ? '买入' : '卖出'}
+                        </span>
+                        {t.trade_tag && t.trade_tag !== '计划内执行' && (
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            {t.trade_tag}
+                          </div>
+                        )}
                       </td>
 
                       <td 
@@ -1371,6 +1415,28 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">成交日期</label>
+                  <input
+                    type="date"
+                    value={tradeDate}
+                    onChange={(e) => setTradeDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 cursor-pointer font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">成交时间</label>
+                  <input
+                    type="time"
+                    step="1"
+                    value={tradeTime}
+                    onChange={(e) => setTradeTime(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 cursor-pointer font-mono"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs text-slate-400 mb-1">买卖理由 / 心理心得 (重要: 供 Agent 分析)</label>
                 <textarea
@@ -1497,13 +1563,29 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                   <span className="text-xs font-bold text-slate-300">成功识别 {parsedItems.length} 笔交易：</span>
                 </div>
 
-                <div className="max-h-36 overflow-y-auto border border-slate-800 rounded-xl bg-slate-950 p-2 text-xs space-y-1">
+                <div className="max-h-48 overflow-y-auto border border-slate-800 rounded-xl bg-slate-950 p-2 text-xs space-y-1.5">
                   {parsedItems.map((item, idx) => (
-                    <div key={idx} className="flex items-center justify-between text-slate-300 py-1 border-b border-slate-900">
-                      <span className={item.trade_type === 'BUY' ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
-                        {item.trade_type === 'BUY' ? '买入' : '卖出'} {item.name} ({item.symbol})
-                      </span>
-                      <span className="font-mono">¥{item.price} x {item.volume}股</span>
+                    <div key={idx} className="flex items-center justify-between text-slate-300 py-1.5 px-2 border-b border-slate-900/80 gap-3 hover:bg-slate-900/50 rounded-lg">
+                      <div className="flex items-center space-x-2.5 min-w-[210px]">
+                        <span className={`px-2 py-0.5 text-[11px] font-bold rounded flex-shrink-0 ${
+                          item.trade_type === 'BUY' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/50' : 'bg-rose-950 text-rose-400 border border-rose-800/50'
+                        }`}>
+                          {item.trade_type === 'BUY' ? '买入' : '卖出'}
+                        </span>
+                        <div className="truncate">
+                          <span className="font-bold text-slate-200">{item.name}</span>
+                          <span className="font-mono text-[10px] text-slate-400 ml-1">({item.symbol})</span>
+                        </div>
+                      </div>
+
+                      <div className="font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                        {item.trade_date}
+                      </div>
+
+                      <div className="font-mono text-right flex-shrink-0">
+                        <span className="text-slate-200">¥{item.price}</span>
+                        <span className="text-slate-500 text-[10px]"> x {item.volume}股</span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1605,7 +1687,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
             <form onSubmit={handleSaveEditedReason} className="space-y-3">
               <div className="text-xs text-slate-400 bg-slate-950 p-2.5 rounded-xl border border-slate-800 space-y-1">
                 <div>
-                  交易方向：<strong className={editingTrade.trade_type === 'BUY' ? 'text-emerald-400' : 'text-red-400'}>{editingTrade.trade_type === 'BUY' ? '买入建仓' : '卖出止盈/损'}</strong> &nbsp;|&nbsp; 
+                  交易方向：<strong className={editingTrade.trade_type === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}>{editingTrade.trade_type === 'BUY' ? '买入' : '卖出'}</strong> &nbsp;|&nbsp; 
                   成交单价：¥{editingTrade.price}
                 </div>
                 <div>成交时间：{editingTrade.trade_date}</div>

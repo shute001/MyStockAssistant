@@ -198,6 +198,68 @@ class ExtractRulesRequest(BaseModel):
     text: str
     title: Optional[str] = "战法心得文章"
 
+def get_trade_context_for_agent(db: Session, limit_recent: int = 150):
+    """
+    Fetch dataset-wide summary statistics (FIFO P&L, win rate, P/L ratio, date range)
+    plus expanded recent trade records sample (up to limit_recent, default 150).
+    Prevents AI Agent from falsely assuming only 20-30 trades exist.
+    """
+    from routers.trades import calculate_trade_ledger
+
+    all_records = db.query(TradeRecord).order_by(TradeRecord.trade_date.asc(), TradeRecord.id.asc()).all()
+    total_count = len(all_records)
+    
+    if total_count == 0:
+        summary_info = {
+            "dataset_scope": "未找到交割单记录",
+            "total_trades_count": 0,
+            "date_range": "无交易数据"
+        }
+        return summary_info, [], set()
+
+    start_date_str = all_records[0].trade_date.strftime("%Y-%m-%d") if all_records[0].trade_date else "未知"
+    end_date_str = all_records[-1].trade_date.strftime("%Y-%m-%d") if all_records[-1].trade_date else "未知"
+
+    ledger_stats = calculate_trade_ledger(all_records)
+    
+    symbol_counts = {}
+    for r in all_records:
+        stk_name = r.name or r.symbol
+        symbol_counts[stk_name] = symbol_counts.get(stk_name, 0) + 1
+    top_stocks = sorted(symbol_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    summary_info = {
+        "dataset_scope": f"已成功装载用户全量历史交割单总计 {total_count} 笔交易记录",
+        "date_range": f"{start_date_str} 至 {end_date_str}",
+        "total_trades_count": total_count,
+        "realized_pnl_fifo": ledger_stats.get("realized_pnl"),
+        "win_rate": f"{ledger_stats.get('win_rate')}%",
+        "profit_loss_ratio": ledger_stats.get("profit_loss_ratio"),
+        "expectancy_per_trade": ledger_stats.get("expectancy"),
+        "total_closed_trades": ledger_stats.get("total_closed_trades"),
+        "total_fees": ledger_stats.get("total_fees"),
+        "planned_execution_ratio": f"{ledger_stats.get('planned_ratio')}%",
+        "most_frequently_traded_stocks": [f"{stk[0]} ({stk[1]}笔)" for stk in top_stocks]
+    }
+
+    recent_records = db.query(TradeRecord).order_by(TradeRecord.trade_date.desc(), TradeRecord.id.desc()).limit(limit_recent).all()
+    trade_payload = []
+    unique_symbols = set()
+    for t in recent_records:
+        unique_symbols.add(t.symbol)
+        trade_payload.append({
+            "symbol": t.symbol,
+            "name": t.name,
+            "trade_type": t.trade_type,
+            "price": t.price,
+            "volume": t.volume,
+            "amount": t.amount,
+            "strategy_reason": t.strategy_reason or "无说明",
+            "trade_date": t.trade_date.strftime("%Y-%m-%d %H:%M:%S") if t.trade_date else ""
+        })
+
+    return summary_info, trade_payload, unique_symbols
+
 class AgentChatMessage(BaseModel):
     role: str
     content: str
@@ -210,20 +272,8 @@ class AgentChatPayload(BaseModel):
 @router.post("/agent/chat-stream")
 async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depends(get_db)):
     """Stream multi-turn conversation with Trade Review Coach AI Agent with memory, real-time quotes & news injection"""
-    # 1. Fetch user recent trade history (last 20 trades)
-    trades = db.query(TradeRecord).order_by(TradeRecord.trade_date.desc()).limit(20).all()
-    trade_payload = []
-    for t in trades:
-        trade_payload.append({
-            "symbol": t.symbol,
-            "name": t.name,
-            "trade_type": t.trade_type,
-            "price": t.price,
-            "volume": t.volume,
-            "amount": t.amount,
-            "strategy_reason": t.strategy_reason or "无说明",
-            "trade_date": t.trade_date.strftime("%Y-%m-%d %H:%M:%S") if t.trade_date else ""
-        })
+    # 1. Fetch user full trade dataset summary + expanded recent trade history (up to 150 trades)
+    summary_info, trade_payload, _ = get_trade_context_for_agent(db, limit_recent=150)
 
     # 2. Fetch user current positions with real-time quotes & market data
     positions = db.query(Position).all()
@@ -283,12 +333,17 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 
     system_prompt = f"""你是一位专业的 A 股交易教练 AI Agent，具备深厚的量化操盘、实时行情研判、行为金融学与心态管理经验。
 
-【⚠️ 最高权威指令 - 你的核心能力认知】
-1. 你已经**全面接入并拥有获取 A 股全市场及 ETF 的实时价格、K 线图技术指标（MA5/10/20均线多空、MACD金叉死叉、KDJ摆动状态、支撑阻力位）以及联网大盘与财经新闻的能力**！
+【⚠️ 最高权威指令 - 你的核心能力与数据全貌认知】
+1. 你已经**完全掌握用户导入的全部历史交易账本与交割单数据全貌**！
+   - 📊 用户全量历史交割单宏观数据汇总：
+{json.dumps(summary_info, ensure_ascii=False, indent=2)}
+   - 下方【用户近期交易明细日志】为你展示了最近 {len(trade_payload)} 笔成交记录。**请绝对不要误以为用户只导入了二三十笔交易**！你手里已握有全量 {summary_info.get('total_trades_count', len(trade_payload))} 笔交易（时间跨度 {summary_info.get('date_range', '全时间段')}）的准确胜率、盈亏比与 FIFO 累计盈亏！当用户询问“是否收到完整数据”或“分析3年操作”时，你必须非常清晰自信地指出你已掌控全量账本宏观数据及近期详细明细日志！
+
+2. 你已经**全面接入并拥有获取 A 股全市场及 ETF 的实时价格、K 线图技术指标（MA5/10/20均线多空、MACD金叉死叉、KDJ摆动状态、支撑阻力位）以及联网大盘与财经新闻的能力**！
 当用户询问你“能否获取实时价格和K线图”或“能否联网”时，你必须**非常明确且自信地回答**：
 “完全可以！我已全面接入 A 股及 ETF 的实时价格行情、K 线均线系统（MA5/10/20）、MACD/KDJ 摆动指标以及大盘新闻快讯。您可以直接告诉我任何股票代码（如 159883、600519）或名称（如 医疗器械ETF、贵州茅台），我将立即为您调出最新的实时价格、K 线形态与买卖支撑位进行专业解读！”
 
-2. **微信消息推送能力**：
+3. **微信消息推送能力**：
 你系统层面已完全支持将你的分析、复盘与策略总结实时发送到用户的个人微信（基于 Server酱 / PushPlus / 企业微信通道）！
 当用户要求你“推送到微信”、“发送到微信”、“把总结/分析发到微信”、“微信推送”等请求时，你必须**非常自信地回答**：
 “好的！我已将本次的操盘分析与策略总结实时发送至您的微信，请在手机微信中查收！”，并在回答第一行包含标识 `[WECHAT_PUSH_REQUESTED]`，随后随附整理好的【微信精简版复盘/策略卡片】。
@@ -299,12 +354,12 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 【用户当前持仓 (包含实时报价与盈亏状态)】
 {json.dumps(pos_payload, ensure_ascii=False, indent=2)}
 
-【用户近期交易历史记录】
+【用户近期交易明细日志 (抽样最近 {len(trade_payload)} 笔交易)】
 {json.dumps(trade_payload, ensure_ascii=False, indent=2)}
 
 {memories_prompt}
 
-请基于上述大盘宏观热点、实时行情与 K 线指标、持仓交割单和认知战法，以专业、沉稳、建设性的语气同用户进行对话。如果用户询问某只股票或具体盘口，请直接引用提供的最新行情指标与大盘热点给出犀利而精准的解答！
+请基于上述大盘宏观热点、实时行情与 K 线指标、全量交割单账本、持仓与认知战法，以专业、沉稳、建设性的语气同用户进行对话。如果用户询问某只股票或具体盘口，请直接引用提供的最新行情指标与大盘热点给出犀利而精准的解答！
 """
 
     messages_payload = [{"role": msg.role, "content": msg.content} for msg in payload.messages]
@@ -342,28 +397,13 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 
 
 @router.post("/agent/review-stream")
-
 async def review_trades_agent_stream(db: Session = Depends(get_db)):
     """Stream Trade Review Agent analysis with memory injection & auto-evolution"""
-    trades = db.query(TradeRecord).order_by(TradeRecord.trade_date.desc()).limit(30).all()
-    trade_payload = []
-    unique_symbols = set()
-    for t in trades:
-        unique_symbols.add(t.symbol)
-        trade_payload.append({
-            "symbol": t.symbol,
-            "name": t.name,
-            "trade_type": t.trade_type,
-            "price": t.price,
-            "volume": t.volume,
-            "amount": t.amount,
-            "strategy_reason": t.strategy_reason or "无说明",
-            "trade_date": t.trade_date.strftime("%Y-%m-%d %H:%M:%S") if t.trade_date else ""
-        })
+    summary_info, trade_payload, unique_symbols = get_trade_context_for_agent(db, limit_recent=150)
 
     # Fetch real-time indicators summary for all traded stocks
     traded_stocks_indicators = {}
-    for sym in list(unique_symbols)[:6]:
+    for sym in list(unique_symbols)[:8]:
         stk_info = MarketDataService.get_stock_indicators_summary(sym)
         if stk_info and "error" not in stk_info:
             traded_stocks_indicators[sym] = stk_info
@@ -386,9 +426,9 @@ async def review_trades_agent_stream(db: Session = Depends(get_db)):
         trade_payload, 
         pos_payload, 
         macro_context=macro_context,
-        traded_stocks_indicators=traded_stocks_indicators
+        traded_stocks_indicators=traded_stocks_indicators,
+        summary_info=summary_info
     )
-
 
     async def event_generator():
         report_text = ""
@@ -401,10 +441,11 @@ async def review_trades_agent_stream(db: Session = Depends(get_db)):
             yield chunk
 
         active_cfg = MultiLLMEngine.get_active_config(db)
+        total_rec_count = summary_info.get("total_trades_count", len(trade_payload))
         report = AnalysisReport(
             report_type="TRADE_REVIEW_AGENT",
             provider_model=active_cfg["model"],
-            input_summary=f"复盘 Agent 诊断 ({len(trade_payload)}笔交易, {len(pos_payload)}持仓)",
+            input_summary=f"复盘 Agent 诊断 (全量{total_rec_count}笔交割单, 抽样{len(trade_payload)}笔明细, {len(pos_payload)}持仓)",
             content_md=report_text,
             generated_at=bj_now()
         )

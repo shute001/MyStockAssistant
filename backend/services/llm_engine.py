@@ -100,12 +100,19 @@ class MultiLLMEngine:
         trade_records: List[Dict[str, Any]], 
         current_positions: List[Dict[str, Any]],
         macro_context: Optional[Dict[str, Any]] = None,
-        traded_stocks_indicators: Optional[Dict[str, Any]] = None
+        traded_stocks_indicators: Optional[Dict[str, Any]] = None,
+        summary_info: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Construct Trade Review Agent prompt with memory injection, per-trade indicators, 4D scoring & weekly leak detection"""
+        """Construct Trade Review Agent prompt with memory injection, dataset summary, per-trade indicators, 4D scoring & weekly leak detection"""
         memory_block = AgentMemoryService.format_memories_for_prompt(db)
         macro_block = MarketDataService.format_macro_prompt_block(macro_context) if macro_context else ""
         
+        summary_block = ""
+        if summary_info:
+            summary_block = f"""## 📊 用户全量历史交易账本宏观统计 (完整 3 年时间跨度、全量胜率、盈亏比与 FIFO 累计盈亏):
+{json.dumps(summary_info, ensure_ascii=False, indent=2)}
+"""
+
         indicators_block = ""
         if traded_stocks_indicators:
             indicators_block = f"""## 📈 交易涉及个股的【实时最新价格、K线均线与技术指标】：
@@ -117,9 +124,15 @@ class MultiLLMEngine:
         prompt = f"""# 🤖 Trade Review Agent (AI 交易复盘与诊所教练) 指令
 
 你是一位经验丰富、注重风险控制与交易心理的 A 股量化交易复盘教练。
-你的职责是：深入分析用户的交易记录、持仓以及确定性统计数据（胜率、盈亏比、期望收益），**对照当日/当前全市场大盘情绪、领涨热点板块、实时新闻背景以及个股真实 K 线均线指标（MA5/10/20、MACD、KDJ、支撑压力位）**，识别交易性格、优点与致命缺点，输出【四维能力评分卡】与【周度纪律漏洞诊断】，给出犀利且可执行的改进指导，并在报告结尾自动萃取【记忆演化总结】。
+你的职责是：深入分析用户的交易记录、持仓以及确定性全量统计数据（胜率、盈亏比、期望收益、全量交易笔数），**对照当日/当前全市场大盘情绪、领涨热点板块、实时新闻背景以及个股真实 K 线均线指标（MA5/10/20、MACD、KDJ、支撑压力位）**，识别交易性格、优点与致命缺点，输出【四维能力评分卡】与【周度纪律漏洞诊断】，给出犀利且可执行的改进指导，并在报告结尾自动萃取【记忆演化总结】。
+
+【重要须知】：你已获得用户全量 {summary_info.get('total_trades_count', len(trade_records)) if summary_info else len(trade_records)} 笔交易的历史账本宏观统计（胜率、盈亏比、期望收益、全量盈亏），下方明细展示了最近 {len(trade_records)} 笔交易的详细日志。在诊断时请基于全量账本宏观指标进行全面定性分析。
 
 {macro_block}
+
+---
+
+{summary_block}
 
 ---
 
@@ -131,7 +144,7 @@ class MultiLLMEngine:
 
 ---
 
-## 二、 用户交易历史明细 ({len(trade_records)} 笔交易):
+## 二、 用户近期交易明细日志 (最近 {len(trade_records)} 笔交易):
 {json.dumps(trade_records, ensure_ascii=False, indent=2)}
 
 ## 三、 用户当前持仓状况:
@@ -405,6 +418,14 @@ YES！**我已全面具备 A 股全市场及 ETF 的实时行情获取、K 线�
 4. 🛡️ **近 30 日核心支撑位与阻力位**
 
 您可以直接在对话框里发给我您最关心的股票代码或名称，我将立即为您调出实时的 K 线指标进行深度剖析！"""
+            elif any(kw in last_msg for kw in ["完整数据", "历史数据", "数据不够", "3年", "只有", "几笔", "没给到"]):
+                simulated_text = f"""针对您的疑问：“**{last_msg}**”：
+
+放心！**系统已将您导入的全部 3 年历史交割单（包括全量交易笔数、胜率、盈亏比、期望收益与 FIFO 结算盈亏）完整汇总传给了 AI Agent 诊断引擎！** 📊
+
+系统除了将全量账本宏观统计（总笔数、时间跨度、高频交易标的、全量胜率与盈亏比）100% 注入 Agent 核心认知外，同时还将最近 150 笔详细交易日志供 Agent 抽样研判。
+
+您可以随时让我针对这 3 年的总体风格、胜率表现、盈亏比或具体某只标的做更深度的多维复盘诊断！"""
             else:
                 simulated_text = f"""针对您的提问：“**{last_msg}**”，我结合您的真实持仓数据与历史交割记录，为您梳理如下核心策略建议：
 

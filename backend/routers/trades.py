@@ -56,6 +56,69 @@ class ClipboardParsePayload(BaseModel):
     text: str
 
 
+def parse_datetime_flexible(dt_val: Optional[Any]) -> datetime:
+    """Flexible datetime parser for trade dates in Chinese delivery slips & broker exports"""
+    if dt_val is None or pd.isna(dt_val):
+        return bj_now()
+    if isinstance(dt_val, datetime):
+        return dt_val.replace(tzinfo=None)
+    if isinstance(dt_val, pd.Timestamp):
+        return dt_val.to_pydatetime().replace(tzinfo=None)
+    
+    s = str(dt_val).strip()
+    if not s or s.lower() in ('nan', 'nat', 'none'):
+        return bj_now()
+
+    # Strip trailing '.0' from float strings like '20260907.0'
+    if re.match(r'^\d+\.0$', s):
+        s = s[:-2]
+
+    # Standardize separators in date strings
+    s = s.replace("年", "-").replace("月", "-").replace("日", " ").replace("/", "-").replace(".", "-")
+    s = re.sub(r'\s+', ' ', s).strip()
+
+    # 1. Try explicit strptime patterns
+    patterns = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        "%Y%m%d %H:%M:%S",
+        "%Y%m%d %H:%M",
+        "%Y%m%d %H%M%S",
+        "%Y%m%d%H%M%S",
+        "%Y%m%d",
+    ]
+    for fmt in patterns:
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+
+    # 2. Extract components via regex
+    date_match = re.search(r'(\d{4})[-/.]?(\d{2})[-/.]?(\d{2})', s)
+    time_match = re.search(r'(\d{1,2}):(\d{2})(?::(\d{2}))?', s)
+    time_match_6digit = re.search(r'\b(\d{2})(\d{2})(\d{2})\b', s) if not time_match else None
+
+    if date_match:
+        y, m, d = int(date_match.group(1)), int(date_match.group(2)), int(date_match.group(3))
+        hh, mm, ss = 0, 0, 0
+        if time_match:
+            hh = int(time_match.group(1))
+            mm = int(time_match.group(2))
+            ss = int(time_match.group(3)) if time_match.group(3) else 0
+        elif time_match_6digit:
+            hh = int(time_match_6digit.group(1))
+            mm = int(time_match_6digit.group(2))
+            ss = int(time_match_6digit.group(3))
+        try:
+            return datetime(y, m, d, hh, mm, ss)
+        except ValueError:
+            pass
+
+    return bj_now()
+
+
+
 def calculate_trade_ledger(records: List[TradeRecord]) -> dict:
     """Calculate cash flow, win rate, P/L ratio, expectancy, and FIFO realised P&L"""
     lots: dict[str, list[list[float]]] = {}
@@ -252,15 +315,7 @@ def create_trade_record(payload: TradeCreatePayload, db: Session = Depends(get_d
         db.commit()
 
     # Parse trade_date
-    t_date = bj_now()
-    if payload.trade_date:
-        try:
-            if " " in payload.trade_date.strip():
-                t_date = datetime.strptime(payload.trade_date.strip(), "%Y-%m-%d %H:%M:%S")
-            else:
-                t_date = datetime.strptime(payload.trade_date.strip(), "%Y-%m-%d")
-        except ValueError:
-            t_date = bj_now()
+    t_date = parse_datetime_flexible(payload.trade_date)
 
     amount = round(payload.price * payload.volume, 2)
     trade = TradeRecord(
@@ -349,15 +404,7 @@ def batch_create_trades(payload: TradeBatchPayload, db: Session = Depends(get_db
             new_stocks.append(stock)
 
         # Parse trade_date
-        t_date = bj_now()
-        if item.trade_date:
-            try:
-                if " " in item.trade_date.strip():
-                    t_date = datetime.strptime(item.trade_date.strip(), "%Y-%m-%d %H:%M:%S")
-                else:
-                    t_date = datetime.strptime(item.trade_date.strip(), "%Y-%m-%d")
-            except ValueError:
-                t_date = bj_now()
+        t_date = parse_datetime_flexible(item.trade_date)
 
         dt_exact_str = t_date.strftime("%Y-%m-%d %H:%M:%S")
         dt_day_str = t_date.strftime("%Y-%m-%d")
@@ -473,6 +520,15 @@ def batch_delete_trades(payload: BatchDeletePayload, db: Session = Depends(get_d
     db.commit()
     return {"status": "success", "count": count}
 
+@router.post("/clear-all")
+@router.delete("/clear-all")
+def clear_all_trades(db: Session = Depends(get_db)):
+    """Clear all historical trade records from database"""
+    count = db.query(TradeRecord).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "success", "deleted_count": count}
+
+
 @router.put("/{trade_id}/reason")
 def update_trade_reason(trade_id: int, payload: UpdateReasonPayload, db: Session = Depends(get_db)):
     """Update strategy reason / reflection note for a trade record"""
@@ -500,14 +556,13 @@ def delete_trade_record(trade_id: int, db: Session = Depends(get_db)):
 def parse_trade_clipboard(payload: ClipboardParsePayload):
     """
     Parse trade log text copied from Flush (同花顺) or broker trading software.
-    Matches lines containing: [Date] [Buy/Sell] [Symbol] [Name] [Price] [Volume]
+    Matches lines containing: [Date/Time] [Buy/Sell] [Symbol] [Name] [Price] [Volume]
     """
     lines = payload.text.strip().split("\n")
     items = []
 
-    # Regex matching: Date, Buy/Sell, Symbol, Name, Price, Volume
     trade_regex = re.compile(
-        r'(\d{4}[-/.]\d{2}[-/.]\d{2})?\s*(买入|卖出|证券买入|证券卖出|BUY|SELL)?\s*([01345689]\d{5})\s+([\u4e00-\u9fa5A-Za-z0-9\*]+)\s+([\d\.,]+)\s+([\d\.,]+)'
+        r'((?:\d{4}[-/.]\d{2}[-/.]\d{2}|\d{8})\s*(?:\d{2}:\d{2}(?::\d{2})?|\d{6})?|\d{2}:\d{2}:\d{2})?\s*(买入|卖出|证券买入|证券卖出|BUY|SELL)?\s*([01345689]\d{5})\s+([\u4e00-\u9fa5A-Za-z0-9\*]+)\s+([\d\.,]+)\s+([\d\.,]+)'
     )
 
     for line in lines:
@@ -517,7 +572,10 @@ def parse_trade_clipboard(payload: ClipboardParsePayload):
 
         match = trade_regex.search(line_str)
         if match:
-            date_str = match.group(1) or datetime.now().strftime("%Y-%m-%d")
+            raw_dt = match.group(1) or ""
+            dt_obj = parse_datetime_flexible(raw_dt) if raw_dt else bj_now()
+            date_str = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
+
             raw_action = match.group(2) or "买入"
             symbol = match.group(3).zfill(6)
             name = match.group(4).strip()
@@ -604,85 +662,177 @@ async def upload_trade_file(file: UploadFile = File(...)):
         columns = [str(col).strip() for col in df.columns]
         df.columns = columns
 
-        date_col = next((col for col in columns if "日期" in col or "时间" in col or "Date" in col or "Time" in col), None)
-        time_col = next((col for col in columns if "时间" in col and col != date_col), None)
+        # Check column types for Format 2 (Flush daily summary / 对账单 with separate 买入数量 / 卖出数量)
+        buy_vol_col = next((col for col in columns if "买入" in col and ("数量" in col or "股数" in col)), None)
+        sell_vol_col = next((col for col in columns if "卖出" in col and ("数量" in col or "股数" in col)), None)
+        buy_price_col = next((col for col in columns if "买入" in col and ("均价" in col or "价格" in col or "单价" in col)), None)
+        sell_price_col = next((col for col in columns if "卖出" in col and ("均价" in col or "价格" in col or "单价" in col)), None)
+        buy_amt_col = next((col for col in columns if "买入" in col and "金额" in col), None)
+        sell_amt_col = next((col for col in columns if "卖出" in col and "金额" in col), None)
+
+        action_col = next((col for col in columns if any(k in col for k in ["操作", "买卖标志", "买卖方向", "类别", "Action"]) and col not in [buy_vol_col, sell_vol_col]), None)
+
+        date_col = next((col for col in columns if "日期" in col or "Date" in col), None)
+        time_col = next((col for col in columns if ("时间" in col or "Time" in col) and col != date_col), None)
+        if not date_col and time_col:
+            date_col = time_col
+            time_col = None
+
+        if not date_col:
+            date_col = next((col for col in columns if "时间" in col or "Date" in col or "Time" in col), None)
+
         symbol_col = next((col for col in columns if "代码" in col or "Symbol" in col), None)
         name_col = next((col for col in columns if "名称" in col or "Name" in col), None)
-        action_col = next((col for col in columns if "操作" in col or "买卖" in col or "标志" in col or "方向" in col or "类别" in col or "Action" in col), None)
-        vol_col = next((col for col in columns if "数量" in col or "股数" in col or "成交量" in col or "Volume" in col), None)
-        price_col = next((col for col in columns if "均价" in col or "价格" in col or "成交价" in col or "单价" in col or "Price" in col), None)
         fee_col = next((col for col in columns if "费用" in col or "佣金" in col or "手续费" in col or "Fee" in col), None)
 
         if symbol_col:
-            for _, row in df.iterrows():
-                symbol_raw = str(row[symbol_col]).strip().split(".")[0]
-                if not symbol_raw.isdigit() or len(symbol_raw) > 6:
-                    continue
-                symbol = symbol_raw.zfill(6)
-                name = str(row[name_col]).strip() if name_col and pd.notna(row[name_col]) else MarketDataService.get_stock_name(symbol)
+            # Format 2 Mode: Separate 买入数量 and 卖出数量 columns (Flush summary sheet / 对账单)
+            if (buy_vol_col or sell_vol_col) and not action_col:
+                for _, row in df.iterrows():
+                    symbol_raw = str(row[symbol_col]).strip().split(".")[0] if pd.notna(row[symbol_col]) else ""
+                    if not symbol_raw.isdigit() or len(symbol_raw) > 6:
+                        continue
+                    symbol = symbol_raw.zfill(6)
+                    name = str(row[name_col]).strip() if name_col and pd.notna(row[name_col]) else MarketDataService.get_stock_name(symbol)
 
-                action_raw = str(row[action_col]).strip() if action_col and pd.notna(row[action_col]) else "买入"
-                trade_type = "SELL" if ("卖" in action_raw or "SELL" in action_raw.upper()) else "BUY"
+                    d_str = str(row[date_col]).strip() if date_col and pd.notna(row[date_col]) else ""
+                    t_str = str(row[time_col]).strip() if time_col and pd.notna(row[time_col]) else ""
+                    combined_dt = f"{d_str} {t_str}".strip()
+                    full_dt = parse_datetime_flexible(combined_dt).strftime("%Y-%m-%d %H:%M:%S") if combined_dt else bj_now().strftime("%Y-%m-%d %H:%M:%S")
 
-                volume = 0
-                if vol_col and pd.notna(row[vol_col]):
-                    try:
-                        volume = int(abs(float(str(row[vol_col]).replace(",", ""))))
-                    except ValueError:
-                        volume = 0
+                    b_vol = 0
+                    if buy_vol_col and pd.notna(row[buy_vol_col]):
+                        try:
+                            b_vol = int(abs(float(str(row[buy_vol_col]).replace(",", ""))))
+                        except ValueError:
+                            b_vol = 0
 
-                if volume <= 0:
-                    continue
+                    s_vol = 0
+                    if sell_vol_col and pd.notna(row[sell_vol_col]):
+                        try:
+                            s_vol = int(abs(float(str(row[sell_vol_col]).replace(",", ""))))
+                        except ValueError:
+                            s_vol = 0
 
-                price = 0.0
-                if price_col and pd.notna(row[price_col]):
-                    try:
-                        price = float(str(row[price_col]).replace(",", ""))
-                    except ValueError:
-                        price = 0.0
+                    fee = 0.0
+                    if fee_col and pd.notna(row[fee_col]):
+                        try:
+                            fee = abs(float(str(row[fee_col]).replace(",", "")))
+                        except ValueError:
+                            fee = 0.0
 
-                fee = 0.0
-                if fee_col and pd.notna(row[fee_col]):
-                    try:
-                        fee = abs(float(str(row[fee_col]).replace(",", "")))
-                    except ValueError:
-                        fee = 0.0
+                    if b_vol > 0:
+                        b_price = 0.0
+                        if buy_price_col and pd.notna(row[buy_price_col]):
+                            try:
+                                b_price = float(str(row[buy_price_col]).replace(",", ""))
+                            except ValueError:
+                                b_price = 0.0
+                        if b_price == 0 and buy_amt_col and pd.notna(row[buy_amt_col]):
+                            try:
+                                b_price = float(str(row[buy_amt_col]).replace(",", "")) / b_vol
+                            except Exception:
+                                b_price = 0.0
 
-                d_str = str(row[date_col]).strip() if date_col and pd.notna(row[date_col]) else ""
-                t_str = str(row[time_col]).strip() if time_col and pd.notna(row[time_col]) else ""
-                
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                if d_str and t_str:
-                    full_dt = f"{d_str} {t_str}"
-                elif d_str:
-                    if len(d_str) == 8 and d_str.isdigit():
-                        full_dt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:8]}"
-                    elif ":" in d_str and len(d_str) <= 8:
-                        full_dt = f"{today_str} {d_str}"
-                    else:
-                        full_dt = d_str
-                else:
-                    full_dt = today_str
+                        items.append({
+                            "symbol": symbol,
+                            "name": name,
+                            "trade_type": "BUY",
+                            "price": round(b_price, 3),
+                            "volume": b_vol,
+                            "amount": round(b_price * b_vol, 2),
+                            "fee": round(fee * (b_vol / (b_vol + s_vol)), 2) if (b_vol + s_vol) > 0 else fee,
+                            "trade_date": full_dt,
+                            "strategy_reason": "同花顺对账单导出"
+                        })
 
-                items.append({
-                    "symbol": symbol,
-                    "name": name,
-                    "trade_type": trade_type,
-                    "price": price,
-                    "volume": volume,
-                    "amount": round(price * volume, 2),
-                    "fee": fee,
-                    "trade_date": full_dt,
-                    "strategy_reason": f"同花顺交割单导出"
-                })
+                    if s_vol > 0:
+                        s_price = 0.0
+                        if sell_price_col and pd.notna(row[sell_price_col]):
+                            try:
+                                s_price = float(str(row[sell_price_col]).replace(",", ""))
+                            except ValueError:
+                                s_price = 0.0
+                        if s_price == 0 and sell_amt_col and pd.notna(row[sell_amt_col]):
+                            try:
+                                s_price = float(str(row[sell_amt_col]).replace(",", "")) / s_vol
+                            except Exception:
+                                s_price = 0.0
+
+                        items.append({
+                            "symbol": symbol,
+                            "name": name,
+                            "trade_type": "SELL",
+                            "price": round(s_price, 3),
+                            "volume": s_vol,
+                            "amount": round(s_price * s_vol, 2),
+                            "fee": round(fee * (s_vol / (b_vol + s_vol)), 2) if (b_vol + s_vol) > 0 else fee,
+                            "trade_date": full_dt,
+                            "strategy_reason": "同花顺对账单导出"
+                        })
+
+            # Format 1 Mode: Single 操作 column (Flush detail slip / 交割明细)
+            else:
+                vol_col = next((col for col in columns if "数量" in col or "股数" in col or "成交量" in col or "Volume" in col), None)
+                price_col = next((col for col in columns if "均价" in col or "价格" in col or "成交价" in col or "单价" in col or "Price" in col), None)
+
+                for _, row in df.iterrows():
+                    symbol_raw = str(row[symbol_col]).strip().split(".")[0] if pd.notna(row[symbol_col]) else ""
+                    if not symbol_raw.isdigit() or len(symbol_raw) > 6:
+                        continue
+                    symbol = symbol_raw.zfill(6)
+                    name = str(row[name_col]).strip() if name_col and pd.notna(row[name_col]) else MarketDataService.get_stock_name(symbol)
+
+                    action_raw = str(row[action_col]).strip() if action_col and pd.notna(row[action_col]) else "买入"
+                    trade_type = "SELL" if ("卖" in action_raw or "SELL" in action_raw.upper()) else "BUY"
+
+                    volume = 0
+                    if vol_col and pd.notna(row[vol_col]):
+                        try:
+                            volume = int(abs(float(str(row[vol_col]).replace(",", ""))))
+                        except ValueError:
+                            volume = 0
+
+                    if volume <= 0:
+                        continue
+
+                    price = 0.0
+                    if price_col and pd.notna(row[price_col]):
+                        try:
+                            price = float(str(row[price_col]).replace(",", ""))
+                        except ValueError:
+                            price = 0.0
+
+                    fee = 0.0
+                    if fee_col and pd.notna(row[fee_col]):
+                        try:
+                            fee = abs(float(str(row[fee_col]).replace(",", "")))
+                        except ValueError:
+                            fee = 0.0
+
+                    d_str = str(row[date_col]).strip() if date_col and pd.notna(row[date_col]) else ""
+                    t_str = str(row[time_col]).strip() if time_col and pd.notna(row[time_col]) else ""
+                    combined_dt = f"{d_str} {t_str}".strip()
+                    full_dt = parse_datetime_flexible(combined_dt).strftime("%Y-%m-%d %H:%M:%S") if combined_dt else bj_now().strftime("%Y-%m-%d %H:%M:%S")
+
+                    items.append({
+                        "symbol": symbol,
+                        "name": name,
+                        "trade_type": trade_type,
+                        "price": price,
+                        "volume": volume,
+                        "amount": round(price * volume, 2),
+                        "fee": fee,
+                        "trade_date": full_dt,
+                        "strategy_reason": "同花顺交割单导出"
+                    })
 
     # 5. Universal Regex Fallback for text files if DataFrame yielded 0 items
     if not items and raw_text:
         lines = raw_text.strip().split("\n")
         trade_regex = re.compile(
-            r'(\d{4}[-/.]\d{2}[-/.]\d{2}|\d{8}|\d{2}:\d{2}:\d{2})?\s*(买入|卖出|证券买入|证券卖出|BUY|SELL)?\s*([01345689]\d{5})\s+([\u4e00-\u9fa5A-Za-z0-9\*]+)\s+([\d\.,]+)\s+([\d\.,]+)'
+            r'((?:\d{4}[-/.]\d{2}[-/.]\d{2}|\d{8})\s*(?:\d{2}:\d{2}(?::\d{2})?|\d{6})?|\d{2}:\d{2}:\d{2})?\s*(买入|卖出|证券买入|证券卖出|BUY|SELL)?\s*([01345689]\d{5})\s+([\u4e00-\u9fa5A-Za-z0-9\*]+)\s+([\d\.,]+)\s+([\d\.,]+)'
         )
-        today_str = datetime.now().strftime("%Y-%m-%d")
 
         for line in lines:
             line_str = line.strip()
@@ -691,13 +841,9 @@ async def upload_trade_file(file: UploadFile = File(...)):
 
             match = trade_regex.search(line_str)
             if match:
-                raw_dt = match.group(1) or today_str
-                if ":" in raw_dt and len(raw_dt) <= 8:
-                    full_dt = f"{today_str} {raw_dt}"
-                elif len(raw_dt) == 8 and raw_dt.isdigit():
-                    full_dt = f"{raw_dt[:4]}-{raw_dt[4:6]}-{raw_dt[6:8]}"
-                else:
-                    full_dt = raw_dt
+                raw_dt = match.group(1) or ""
+                dt_obj = parse_datetime_flexible(raw_dt) if raw_dt else bj_now()
+                full_dt = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
 
                 raw_action = match.group(2) or "买入"
                 symbol = match.group(3).zfill(6)
