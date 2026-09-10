@@ -278,9 +278,24 @@ def get_watchlists(db: Session = Depends(get_db)):
         db.commit()
     return result
 
+def normalize_categories(cat_str: Optional[str]) -> List[str]:
+    if not cat_str:
+        return ["默认自选"]
+    cleaned = cat_str.replace("，", ",").replace("、", ",").replace("/", ",").replace("|", ",").replace(";", ",")
+    cats = [c.strip() for c in cleaned.split(",") if c.strip()]
+    return cats if cats else ["默认自选"]
+
+def join_categories(cats: List[str]) -> str:
+    unique = []
+    for c in cats:
+        c_clean = c.strip()
+        if c_clean and c_clean not in unique:
+            unique.append(c_clean)
+    return ",".join(unique) if unique else "默认自选"
+
 @router.post("/watchlists")
 def create_watchlist(item: WatchlistCreate, db: Session = Depends(get_db)):
-    """Add a stock to watchlist"""
+    """Add a stock to watchlist, or append new categories if already exists"""
     symbol = MarketDataService.format_symbol(item.symbol)
     stock_name = item.name if (item.name and not item.name.startswith("股票")) else MarketDataService.get_stock_name(symbol)
     
@@ -294,10 +309,11 @@ def create_watchlist(item: WatchlistCreate, db: Session = Depends(get_db)):
         db.commit()
 
     w = db.query(Watchlist).filter(Watchlist.symbol == symbol).first()
+    incoming_cats = normalize_categories(item.category)
     if not w:
         w = Watchlist(
             symbol=symbol,
-            category=item.category or "观察池",
+            category=join_categories(incoming_cats),
             target_buy_price=item.target_buy_price,
             stop_loss_price=item.stop_loss_price,
             remark=item.remark
@@ -305,7 +321,22 @@ def create_watchlist(item: WatchlistCreate, db: Session = Depends(get_db)):
         db.add(w)
         db.commit()
         db.refresh(w)
-    return {"status": "success", "id": w.id}
+    else:
+        # 已存在该自选股时，智能合并/追加新板块标签（实现单股同时属于多个板块）
+        exist_cats = normalize_categories(w.category)
+        for inc in incoming_cats:
+            if inc and inc not in exist_cats:
+                exist_cats.append(inc)
+        w.category = join_categories(exist_cats)
+        if item.target_buy_price is not None:
+            w.target_buy_price = item.target_buy_price
+        if item.stop_loss_price is not None:
+            w.stop_loss_price = item.stop_loss_price
+        if item.remark:
+            w.remark = item.remark
+        db.commit()
+        db.refresh(w)
+    return {"status": "success", "id": w.id, "category": w.category}
 
 @router.get("/categories")
 def get_categories(db: Session = Depends(get_db)):
@@ -313,11 +344,11 @@ def get_categories(db: Session = Depends(get_db)):
     watchlists = db.query(Watchlist).all()
     stats: Dict[str, int] = {}
     for w in watchlists:
-        cat = w.category or "默认自选"
-        stats[cat] = stats.get(cat, 0) + 1
+        cats = normalize_categories(w.category)
+        for cat in set(cats):
+            stats[cat] = stats.get(cat, 0) + 1
     
     categories = [{"name": cat, "count": count} for cat, count in stats.items()]
-    # Ensure "全部自选" is at top
     total_count = len(watchlists)
     return {
         "total_count": total_count,
@@ -325,7 +356,9 @@ def get_categories(db: Session = Depends(get_db)):
     }
 
 class CategoryUpdateItem(BaseModel):
-    category: str
+    category: Optional[str] = None
+    categories: Optional[List[str]] = None
+    action: Optional[str] = "set"  # set, add, remove
 
 class CategoryRenameItem(BaseModel):
     old_name: str
@@ -333,11 +366,27 @@ class CategoryRenameItem(BaseModel):
 
 @router.put("/watchlists/{w_id}/category")
 def update_watchlist_category(w_id: int, item: CategoryUpdateItem, db: Session = Depends(get_db)):
-    """Relocate a watchlist stock to a new sector/category"""
+    """Update or toggle categories for a watchlist stock"""
     w = db.query(Watchlist).filter(Watchlist.id == w_id).first()
     if not w:
         raise HTTPException(status_code=404, detail="Watchlist item not found")
-    w.category = item.category.strip() or "默认自选"
+    
+    current_cats = normalize_categories(w.category)
+    if item.categories is not None:
+        w.category = join_categories(item.categories)
+    elif item.action == "add" and item.category:
+        add_cats = normalize_categories(item.category)
+        for c in add_cats:
+            if c not in current_cats:
+                current_cats.append(c)
+        w.category = join_categories(current_cats)
+    elif item.action == "remove" and item.category:
+        rm_target = item.category.strip()
+        current_cats = [c for c in current_cats if c != rm_target]
+        w.category = join_categories(current_cats)
+    elif item.category is not None:
+        w.category = join_categories(normalize_categories(item.category))
+    
     db.commit()
     return {"status": "success", "id": w_id, "new_category": w.category}
 
@@ -347,11 +396,18 @@ def rename_category(item: CategoryRenameItem, db: Session = Depends(get_db)):
     if not item.old_name or not item.new_name:
         raise HTTPException(status_code=400, detail="Invalid category names")
     
-    items = db.query(Watchlist).filter(Watchlist.category == item.old_name).all()
+    old_n = item.old_name.strip()
+    new_n = item.new_name.strip()
+    items = db.query(Watchlist).all()
+    updated_count = 0
     for w in items:
-        w.category = item.new_name.strip()
+        cats = normalize_categories(w.category)
+        if old_n in cats:
+            new_cats = [new_n if c == old_n else c for c in cats]
+            w.category = join_categories(new_cats)
+            updated_count += 1
     db.commit()
-    return {"status": "success", "updated_count": len(items)}
+    return {"status": "success", "updated_count": updated_count}
 
 class BatchDeletePayload(BaseModel):
     ids: List[int]
@@ -359,6 +415,7 @@ class BatchDeletePayload(BaseModel):
 class BatchCategoryRelocatePayload(BaseModel):
     ids: List[int]
     category: str
+    mode: Optional[str] = "append"  # "append" 同时加入板块, "replace" 替换为该板块
 
 @router.post("/watchlists/batch-delete")
 def batch_delete_watchlists(payload: BatchDeletePayload, db: Session = Depends(get_db)):
@@ -388,29 +445,57 @@ def purge_zero_volume_positions(db: Session = Depends(get_db)):
 
 @router.post("/watchlists/batch-relocate")
 def batch_relocate_watchlists(payload: BatchCategoryRelocatePayload, db: Session = Depends(get_db)):
-    """Batch relocate selected watchlist items to a target category"""
-    if not payload.ids:
+    """Batch add or relocate selected watchlist items to a target category"""
+    if not payload.ids or not payload.category:
         return {"status": "success", "updated_count": 0}
     target_cat = payload.category.strip() or "默认自选"
-    updated = db.query(Watchlist).filter(Watchlist.id.in_(payload.ids)).update({"category": target_cat}, synchronize_session=False)
+    items = db.query(Watchlist).filter(Watchlist.id.in_(payload.ids)).all()
+    for w in items:
+        if payload.mode == "replace":
+            w.category = target_cat
+        else:
+            cats = normalize_categories(w.category)
+            if target_cat not in cats:
+                cats.append(target_cat)
+            w.category = join_categories(cats)
     db.commit()
-    return {"status": "success", "updated_count": updated}
+    return {"status": "success", "updated_count": len(items)}
 
 @router.delete("/categories/{category_name}/purge")
 def purge_entire_category(category_name: str, db: Session = Depends(get_db)):
-    """Purge and delete an entire sector category AND all contained stocks"""
-    deleted = db.query(Watchlist).filter(Watchlist.category == category_name).delete(synchronize_session=False)
+    """Purge category: if stock only belongs to this category, delete it; otherwise, detach category"""
+    cat_n = category_name.strip()
+    items = db.query(Watchlist).all()
+    deleted_count = 0
+    detached_count = 0
+    for w in items:
+        cats = normalize_categories(w.category)
+        if cat_n in cats:
+            cats = [c for c in cats if c != cat_n]
+            if not cats:
+                db.delete(w)
+                deleted_count += 1
+            else:
+                w.category = join_categories(cats)
+                detached_count += 1
     db.commit()
-    return {"status": "success", "deleted_stocks_count": deleted}
+    return {"status": "success", "deleted_stocks_count": deleted_count, "detached_count": detached_count}
 
 @router.delete("/categories/{category_name}")
 def delete_category(category_name: str, db: Session = Depends(get_db)):
-    """Delete a sector category and reset its stocks to '默认自选'"""
-    items = db.query(Watchlist).filter(Watchlist.category == category_name).all()
+    """Delete a sector category without deleting stocks (reset to '默认自选' if solitary)"""
+    cat_n = category_name.strip()
+    items = db.query(Watchlist).all()
+    affected_count = 0
     for w in items:
-        w.category = "默认自选"
+        cats = normalize_categories(w.category)
+        if cat_n in cats:
+            cats = [c for c in cats if c != cat_n]
+            w.category = join_categories(cats) if cats else "默认自选"
+            affected_count += 1
     db.commit()
-    return {"status": "success", "reset_count": len(items)}
+    return {"status": "success", "reset_count": affected_count}
+
 
 @router.delete("/watchlists/{w_id}")
 def delete_watchlist(w_id: int, db: Session = Depends(get_db)):

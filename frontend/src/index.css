@@ -3,30 +3,137 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
+  /* 1. Indigo Theme (星空靛蓝 - 默认冷蓝黑) */
+  :root, [data-theme="indigo"] {
     color-scheme: dark;
+    --theme-primary: #6366f1;
+    --theme-primary-rgb: 99, 102, 241;
+    --theme-bg-base: #020617;
+    --theme-surface: #0f172a;
+    --theme-surface-nested: #090e1a;
+    --theme-border: #1e293b;
+    --theme-border-hover: rgba(99, 102, 241, 0.45);
+    --theme-header-bg: rgba(2, 6, 23, 0.82);
+    --theme-glow-1: rgba(79, 70, 229, 0.22);
+    --theme-glow-2: rgba(8, 145, 178, 0.12);
+  }
+
+  /* 2. Gold Theme (黑金华尔街 - 曜石暖炭黑金) */
+  [data-theme="gold"] {
+    --theme-primary: #f59e0b;
+    --theme-primary-rgb: 245, 158, 11;
+    --theme-bg-base: #0c0a09;
+    --theme-surface: #1c1917;
+    --theme-surface-nested: #141210;
+    --theme-border: #292524;
+    --theme-border-hover: rgba(245, 158, 11, 0.55);
+    --theme-header-bg: rgba(12, 10, 9, 0.88);
+    --theme-glow-1: rgba(245, 158, 11, 0.35);
+    --theme-glow-2: rgba(217, 119, 6, 0.20);
+  }
+
+  /* 3. Emerald Theme (极客翡翠 - 赛博墨绿夜色) */
+  [data-theme="emerald"] {
+    --theme-primary: #10b981;
+    --theme-primary-rgb: 16, 185, 129;
+    --theme-bg-base: #020d09;
+    --theme-surface: #061e16;
+    --theme-surface-nested: #03140e;
+    --theme-border: #0e3d2d;
+    --theme-border-hover: rgba(16, 185, 129, 0.55);
+    --theme-header-bg: rgba(2, 13, 9, 0.88);
+    --theme-glow-1: rgba(16, 185, 129, 0.35);
+    --theme-glow-2: rgba(13, 148, 136, 0.20);
+  }
+
+  /* 4. Cyan Theme (深海蔚蓝 - 极渊冷冽深蓝) */
+  [data-theme="cyan"] {
+    --theme-primary: #06b6d4;
+    --theme-primary-rgb: 6, 182, 212;
+    --theme-bg-base: #020b14;
+    --theme-surface: #081d30;
+    --theme-surface-nested: #041322;
+    --theme-border: #103452;
+    --theme-border-hover: rgba(6, 182, 212, 0.55);
+    --theme-header-bg: rgba(2, 11, 20, 0.88);
+    --theme-glow-1: rgba(6, 182, 212, 0.35);
+    --theme-glow-2: rgba(59, 130, 246, 0.20);
+  }
+
+  /* 5. Rose Theme (暗夜霓虹 - 丝绒暗红曜石) */
+  [data-theme="rose"] {
+    --theme-primary: #f43f5e;
+    --theme-primary-rgb: 244, 63, 94;
+    --theme-bg-base: #110508;
+    --theme-surface: #1f0b11;
+    --theme-surface-nested: #16060b;
+    --theme-border: #3b141e;
+    --theme-border-hover: rgba(244, 63, 94, 0.55);
+    --theme-header-bg: rgba(17, 5, 8, 0.88);
+    --theme-glow-1: rgba(244, 63, 94, 0.35);
+    --theme-glow-2: rgba(236, 72, 153, 0.20);
+  }
+
+  /* 6. Apple Silver (苹果冰川纯白 - macOS 通透浅色冷银) */
+  [data-theme="apple-silver"] {
+    color-scheme: light;
+    --theme-primary: #0071e3;
+    --theme-primary-rgb: 0, 113, 227;
+    --theme-bg-base: #f5f5f7;
+    --theme-surface: #ffffff;
+    --theme-surface-nested: #f8fafc;
+    --theme-border: #e2e8f0;
+    --theme-border-hover: rgba(0, 113, 227, 0.45);
+    --theme-header-bg: rgba(245, 245, 247, 0.85);
+    --theme-glow-1: rgba(0, 113, 227, 0.08);
+    --theme-glow-2: rgba(56, 189, 248, 0.06);
+  }
+
+  /* 7. Apple Warm (苹果温润暖白 - 加州暖阳纸感米白护眼) */
+  [data-theme="apple-warm"] {
+    color-scheme: light;
+    --theme-primary: #ea580c;
+    --theme-primary-rgb: 234, 88, 12;
+    --theme-bg-base: #fbfbf9;
+    --theme-surface: #ffffff;
+    --theme-surface-nested: #f7f6f2;
+    --theme-border: #e7e5e4;
+    --theme-border-hover: rgba(234, 88, 12, 0.45);
+    --theme-header-bg: rgba(251, 251, 249, 0.85);
+    --theme-glow-1: rgba(234, 88, 12, 0.08);
+    --theme-glow-2: rgba(245, 158, 11, 0.06);
   }
 
   html {
     min-width: 320px;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    text-rendering: geometricPrecision;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* 仅在高分辨率 Retina 屏启用灰度平滑；Windows 普通屏幕保留原生 ClearType 亚像素清晰渲染，彻底告别字迹模糊 */
+  @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    html {
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
   }
 
   body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-    @apply bg-slate-950 text-slate-100 antialiased tracking-normal;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Source Han Sans CN", sans-serif;
+    background-color: var(--theme-bg-base, #020617);
+    color: #f8fafc;
     min-height: 100vh;
     overflow-x: hidden;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    transition: background-color 0.35s ease;
   }
 
-  /* Monospaced Stock Prices & Numbers with Tabular Alignment */
+  /* 针对股票数值与金融等宽表格强化清晰度 */
   .font-mono {
-    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-family: 'JetBrains Mono', 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.015em;
   }
 }
 
@@ -36,9 +143,10 @@
     position: relative;
     isolation: isolate;
     background:
-      radial-gradient(900px 460px at 12% -10%, rgba(79, 70, 229, 0.18), transparent 60%),
-      radial-gradient(760px 420px at 95% 8%, rgba(8, 145, 178, 0.10), transparent 58%),
-      #020617;
+      radial-gradient(900px 480px at 12% -10%, var(--theme-glow-1), transparent 60%),
+      radial-gradient(760px 420px at 95% 8%, var(--theme-glow-2), transparent 58%),
+      var(--theme-bg-base, #020617);
+    transition: background 0.35s ease;
   }
 
   .app-shell::before {
@@ -58,18 +166,21 @@
   }
 
   .surface-card {
-    @apply border border-slate-800/80 bg-slate-900/85 shadow-xl shadow-slate-950/20;
-    background-image: linear-gradient(135deg, rgba(30, 41, 59, 0.30), transparent 42%);
+    background-color: var(--theme-surface, #0f172a);
+    border-color: var(--theme-border, #1e293b);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.35), 0 8px 10px -6px rgba(0, 0, 0, 0.35);
+    background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.025), transparent 42%);
+    transition: background-color 0.35s ease, border-color 0.35s ease;
   }
 
   .interactive-card {
-    @apply transition-all duration-200;
+    transition: all 0.2s ease;
   }
 
   .interactive-card:hover {
     transform: translateY(-2px);
-    border-color: rgba(99, 102, 241, 0.38);
-    box-shadow: 0 16px 30px rgba(2, 6, 23, 0.26);
+    border-color: var(--theme-border-hover);
+    box-shadow: 0 16px 30px rgba(0, 0, 0, 0.45);
   }
 }
 
@@ -78,41 +189,770 @@ button, input, select, textarea {
 }
 
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [role="button"]:focus-visible {
-  outline: 2px solid #818cf8;
+  outline: 2px solid var(--theme-primary, #818cf8);
   outline-offset: 2px;
 }
 
-::selection {
-  background: rgba(99, 102, 241, 0.42);
-  color: #f8fafc;
-}
-
-/* High Contrast & Crisp Typography Enhancements */
-.text-slate-400 {
-  color: #94a3b8; /* Enhanced contrast for secondary text */
-}
-
-/* Custom Scrollbar Styles */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: var(--theme-bg-base, #090d16);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 4px;
+  background: var(--theme-border, #334155);
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: var(--theme-primary, #6366f1);
 }
 
-@media (max-width: 767px) {
-  .app-shell::before {
-    background-size: 24px 24px;
+/* ==========================================================================
+   Full Atmosphere & Color Overrides per Theme
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. GOLD THEME (黑金华尔街 - 全站基底变曜石暖金黑)
+   -------------------------------------------------------------------------- */
+[data-theme="gold"] {
+  background-color: #0c0a09 !important;
+}
+[data-theme="gold"] body,
+[data-theme="gold"] .app-shell {
+  background-color: #0c0a09 !important;
+}
+[data-theme="gold"] header {
+  background-color: rgba(12, 10, 9, 0.88) !important;
+  border-bottom-color: #292524 !important;
+}
+[data-theme="gold"] .surface-card,
+[data-theme="gold"] .bg-slate-900,
+[data-theme="gold"] .bg-slate-900\/95,
+[data-theme="gold"] .bg-slate-900\/90,
+[data-theme="gold"] .bg-slate-900\/85,
+[data-theme="gold"] .bg-slate-900\/80,
+[data-theme="gold"] .bg-slate-900\/75 {
+  background-color: #1c1917 !important;
+  border-color: #292524 !important;
+}
+[data-theme="gold"] .bg-slate-950,
+[data-theme="gold"] .bg-slate-950\/90,
+[data-theme="gold"] .bg-slate-950\/80,
+[data-theme="gold"] .bg-slate-950\/70,
+[data-theme="gold"] .bg-slate-950\/60 {
+  background-color: #141210 !important;
+  border-color: #292524 !important;
+}
+[data-theme="gold"] .border-slate-800,
+[data-theme="gold"] .border-slate-800\/90,
+[data-theme="gold"] .border-slate-800\/80,
+[data-theme="gold"] .border-slate-800\/60,
+[data-theme="gold"] .border-slate-700 {
+  border-color: #292524 !important;
+}
+[data-theme="gold"] .bg-slate-800,
+[data-theme="gold"] .bg-slate-800\/80,
+[data-theme="gold"] .hover\:bg-slate-800:hover,
+[data-theme="gold"] .hover\:bg-slate-800\/80:hover,
+[data-theme="gold"] .hover\:bg-slate-800\/70:hover {
+  background-color: #292524 !important;
+}
+[data-theme="gold"] .bg-indigo-600,
+[data-theme="gold"] .bg-indigo-500 {
+  background-color: #f59e0b !important;
+  color: #000000 !important;
+  font-weight: 700 !important;
+}
+[data-theme="gold"] .hover\:bg-indigo-500:hover,
+[data-theme="gold"] .hover\:bg-indigo-600:hover {
+  background-color: #fbbf24 !important;
+}
+[data-theme="gold"] .text-indigo-400,
+[data-theme="gold"] .text-indigo-300,
+[data-theme="gold"] .text-indigo-200 {
+  color: #fbbf24 !important;
+}
+[data-theme="gold"] .border-indigo-700\/40,
+[data-theme="gold"] .border-indigo-700\/50,
+[data-theme="gold"] .border-indigo-700\/60,
+[data-theme="gold"] .border-indigo-600\/60 {
+  border-color: rgba(245, 158, 11, 0.45) !important;
+}
+[data-theme="gold"] .bg-indigo-950,
+[data-theme="gold"] .bg-indigo-950\/90,
+[data-theme="gold"] .bg-indigo-950\/80,
+[data-theme="gold"] .bg-indigo-950\/70,
+[data-theme="gold"] .bg-indigo-950\/40 {
+  background-color: rgba(120, 53, 15, 0.35) !important;
+}
+[data-theme="gold"] .from-indigo-600 {
+  --tw-gradient-from: #f59e0b var(--tw-gradient-from-position) !important;
+}
+[data-theme="gold"] .to-purple-500,
+[data-theme="gold"] .to-violet-500 {
+  --tw-gradient-to: #d97706 var(--tw-gradient-to-position) !important;
+}
+
+/* --------------------------------------------------------------------------
+   2. EMERALD THEME (极客翡翠 - 全站基底变深邃赛博黑绿)
+   -------------------------------------------------------------------------- */
+[data-theme="emerald"] {
+  background-color: #020d09 !important;
+}
+[data-theme="emerald"] body,
+[data-theme="emerald"] .app-shell {
+  background-color: #020d09 !important;
+}
+[data-theme="emerald"] header {
+  background-color: rgba(2, 13, 9, 0.88) !important;
+  border-bottom-color: #0e3d2d !important;
+}
+[data-theme="emerald"] .surface-card,
+[data-theme="emerald"] .bg-slate-900,
+[data-theme="emerald"] .bg-slate-900\/95,
+[data-theme="emerald"] .bg-slate-900\/90,
+[data-theme="emerald"] .bg-slate-900\/85,
+[data-theme="emerald"] .bg-slate-900\/80,
+[data-theme="emerald"] .bg-slate-900\/75 {
+  background-color: #061e16 !important;
+  border-color: #0e3d2d !important;
+}
+[data-theme="emerald"] .bg-slate-950,
+[data-theme="emerald"] .bg-slate-950\/90,
+[data-theme="emerald"] .bg-slate-950\/80,
+[data-theme="emerald"] .bg-slate-950\/70,
+[data-theme="emerald"] .bg-slate-950\/60 {
+  background-color: #03140e !important;
+  border-color: #0e3d2d !important;
+}
+[data-theme="emerald"] .border-slate-800,
+[data-theme="emerald"] .border-slate-800\/90,
+[data-theme="emerald"] .border-slate-800\/80,
+[data-theme="emerald"] .border-slate-800\/60,
+[data-theme="emerald"] .border-slate-700 {
+  border-color: #0e3d2d !important;
+}
+[data-theme="emerald"] .bg-slate-800,
+[data-theme="emerald"] .bg-slate-800\/80,
+[data-theme="emerald"] .hover\:bg-slate-800:hover,
+[data-theme="emerald"] .hover\:bg-slate-800\/80:hover,
+[data-theme="emerald"] .hover\:bg-slate-800\/70:hover {
+  background-color: #0e3d2d !important;
+}
+[data-theme="emerald"] .bg-indigo-600,
+[data-theme="emerald"] .bg-indigo-500 {
+  background-color: #10b981 !important;
+  color: #000000 !important;
+  font-weight: 700 !important;
+}
+[data-theme="emerald"] .hover\:bg-indigo-500:hover,
+[data-theme="emerald"] .hover\:bg-indigo-600:hover {
+  background-color: #34d399 !important;
+}
+[data-theme="emerald"] .text-indigo-400,
+[data-theme="emerald"] .text-indigo-300,
+[data-theme="emerald"] .text-indigo-200 {
+  color: #34d399 !important;
+}
+[data-theme="emerald"] .border-indigo-700\/40,
+[data-theme="emerald"] .border-indigo-700\/50,
+[data-theme="emerald"] .border-indigo-700\/60,
+[data-theme="emerald"] .border-indigo-600\/60 {
+  border-color: rgba(16, 185, 129, 0.45) !important;
+}
+[data-theme="emerald"] .bg-indigo-950,
+[data-theme="emerald"] .bg-indigo-950\/90,
+[data-theme="emerald"] .bg-indigo-950\/80,
+[data-theme="emerald"] .bg-indigo-950\/70,
+[data-theme="emerald"] .bg-indigo-950\/40 {
+  background-color: rgba(6, 78, 59, 0.35) !important;
+}
+[data-theme="emerald"] .from-indigo-600 {
+  --tw-gradient-from: #10b981 var(--tw-gradient-from-position) !important;
+}
+[data-theme="emerald"] .to-purple-500,
+[data-theme="emerald"] .to-violet-500 {
+  --tw-gradient-to: #059669 var(--tw-gradient-to-position) !important;
+}
+
+/* --------------------------------------------------------------------------
+   3. CYAN THEME (深海蔚蓝 - 全站基底变极渊冷夜深蓝)
+   -------------------------------------------------------------------------- */
+[data-theme="cyan"] {
+  background-color: #020b14 !important;
+}
+[data-theme="cyan"] body,
+[data-theme="cyan"] .app-shell {
+  background-color: #020b14 !important;
+}
+[data-theme="cyan"] header {
+  background-color: rgba(2, 11, 20, 0.88) !important;
+  border-bottom-color: #103452 !important;
+}
+[data-theme="cyan"] .surface-card,
+[data-theme="cyan"] .bg-slate-900,
+[data-theme="cyan"] .bg-slate-900\/95,
+[data-theme="cyan"] .bg-slate-900\/90,
+[data-theme="cyan"] .bg-slate-900\/85,
+[data-theme="cyan"] .bg-slate-900\/80,
+[data-theme="cyan"] .bg-slate-900\/75 {
+  background-color: #081d30 !important;
+  border-color: #103452 !important;
+}
+[data-theme="cyan"] .bg-slate-950,
+[data-theme="cyan"] .bg-slate-950\/90,
+[data-theme="cyan"] .bg-slate-950\/80,
+[data-theme="cyan"] .bg-slate-950\/70,
+[data-theme="cyan"] .bg-slate-950\/60 {
+  background-color: #041322 !important;
+  border-color: #103452 !important;
+}
+[data-theme="cyan"] .border-slate-800,
+[data-theme="cyan"] .border-slate-800\/90,
+[data-theme="cyan"] .border-slate-800\/80,
+[data-theme="cyan"] .border-slate-800\/60,
+[data-theme="cyan"] .border-slate-700 {
+  border-color: #103452 !important;
+}
+[data-theme="cyan"] .bg-slate-800,
+[data-theme="cyan"] .bg-slate-800\/80,
+[data-theme="cyan"] .hover\:bg-slate-800:hover,
+[data-theme="cyan"] .hover\:bg-slate-800\/80:hover,
+[data-theme="cyan"] .hover\:bg-slate-800\/70:hover {
+  background-color: #103452 !important;
+}
+[data-theme="cyan"] .bg-indigo-600,
+[data-theme="cyan"] .bg-indigo-500 {
+  background-color: #06b6d4 !important;
+  color: #000000 !important;
+  font-weight: 700 !important;
+}
+[data-theme="cyan"] .hover\:bg-indigo-500:hover,
+[data-theme="cyan"] .hover\:bg-indigo-600:hover {
+  background-color: #22d3ee !important;
+}
+[data-theme="cyan"] .text-indigo-400,
+[data-theme="cyan"] .text-indigo-300,
+[data-theme="cyan"] .text-indigo-200 {
+  color: #22d3ee !important;
+}
+[data-theme="cyan"] .border-indigo-700\/40,
+[data-theme="cyan"] .border-indigo-700\/50,
+[data-theme="cyan"] .border-indigo-700\/60,
+[data-theme="cyan"] .border-indigo-600\/60 {
+  border-color: rgba(6, 182, 212, 0.45) !important;
+}
+[data-theme="cyan"] .bg-indigo-950,
+[data-theme="cyan"] .bg-indigo-950\/90,
+[data-theme="cyan"] .bg-indigo-950\/80,
+[data-theme="cyan"] .bg-indigo-950\/70,
+[data-theme="cyan"] .bg-indigo-950\/40 {
+  background-color: rgba(22, 78, 99, 0.35) !important;
+}
+[data-theme="cyan"] .from-indigo-600 {
+  --tw-gradient-from: #06b6d4 var(--tw-gradient-from-position) !important;
+}
+[data-theme="cyan"] .to-purple-500,
+[data-theme="cyan"] .to-violet-500 {
+  --tw-gradient-to: #0284c7 var(--tw-gradient-to-position) !important;
+}
+
+/* --------------------------------------------------------------------------
+   4. ROSE THEME (暗夜霓虹 - 全站基底变丝绒酒红黑)
+   -------------------------------------------------------------------------- */
+[data-theme="rose"] {
+  background-color: #110508 !important;
+}
+[data-theme="rose"] body,
+[data-theme="rose"] .app-shell {
+  background-color: #110508 !important;
+}
+[data-theme="rose"] header {
+  background-color: rgba(17, 5, 8, 0.88) !important;
+  border-bottom-color: #3b141e !important;
+}
+[data-theme="rose"] .surface-card,
+[data-theme="rose"] .bg-slate-900,
+[data-theme="rose"] .bg-slate-900\/95,
+[data-theme="rose"] .bg-slate-900\/90,
+[data-theme="rose"] .bg-slate-900\/85,
+[data-theme="rose"] .bg-slate-900\/80,
+[data-theme="rose"] .bg-slate-900\/75 {
+  background-color: #1f0b11 !important;
+  border-color: #3b141e !important;
+}
+[data-theme="rose"] .bg-slate-950,
+[data-theme="rose"] .bg-slate-950\/90,
+[data-theme="rose"] .bg-slate-950\/80,
+[data-theme="rose"] .bg-slate-950\/70,
+[data-theme="rose"] .bg-slate-950\/60 {
+  background-color: #16060b !important;
+  border-color: #3b141e !important;
+}
+[data-theme="rose"] .border-slate-800,
+[data-theme="rose"] .border-slate-800\/90,
+[data-theme="rose"] .border-slate-800\/80,
+[data-theme="rose"] .border-slate-800\/60,
+[data-theme="rose"] .border-slate-700 {
+  border-color: #3b141e !important;
+}
+[data-theme="rose"] .bg-slate-800,
+[data-theme="rose"] .bg-slate-800\/80,
+[data-theme="rose"] .hover\:bg-slate-800:hover,
+[data-theme="rose"] .hover\:bg-slate-800\/80:hover,
+[data-theme="rose"] .hover\:bg-slate-800\/70:hover {
+  background-color: #3b141e !important;
+}
+[data-theme="rose"] .bg-indigo-600,
+[data-theme="rose"] .bg-indigo-500 {
+  background-color: #f43f5e !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+}
+[data-theme="rose"] .hover\:bg-indigo-500:hover,
+[data-theme="rose"] .hover\:bg-indigo-600:hover {
+  background-color: #fb7185 !important;
+}
+[data-theme="rose"] .text-indigo-400,
+[data-theme="rose"] .text-indigo-300,
+[data-theme="rose"] .text-indigo-200 {
+  color: #fb7185 !important;
+}
+[data-theme="rose"] .border-indigo-700\/40,
+[data-theme="rose"] .border-indigo-700\/50,
+[data-theme="rose"] .border-indigo-700\/60,
+[data-theme="rose"] .border-indigo-600\/60 {
+  border-color: rgba(244, 63, 94, 0.45) !important;
+}
+[data-theme="rose"] .bg-indigo-950,
+[data-theme="rose"] .bg-indigo-950\/90,
+[data-theme="rose"] .bg-indigo-950\/80,
+[data-theme="rose"] .bg-indigo-950\/70,
+[data-theme="rose"] .bg-indigo-950\/40 {
+  background-color: rgba(136, 19, 55, 0.35) !important;
+}
+[data-theme="rose"] .from-indigo-600 {
+  --tw-gradient-from: #f43f5e var(--tw-gradient-from-position) !important;
+}
+[data-theme="rose"] .to-purple-500,
+[data-theme="rose"] .to-violet-500 {
+  --tw-gradient-to: #e11d48 var(--tw-gradient-to-position) !important;
+}
+
+/* ==========================================================================
+   5. APPLE SILVER THEME (🍎 苹果冰川纯白 - macOS 通透浅色冷银)
+   ========================================================================== */
+[data-theme="apple-silver"] {
+  background-color: #f5f5f7 !important;
+  color: #0f172a !important;
+}
+[data-theme="apple-silver"] body,
+[data-theme="apple-silver"] .app-shell {
+  background-color: #f5f5f7 !important;
+  color: #0f172a !important;
+}
+[data-theme="apple-silver"] .app-shell::before {
+  opacity: 0.12 !important;
+  background-image: linear-gradient(rgba(100, 116, 139, 0.15) 1px, transparent 1px), linear-gradient(90deg, rgba(100, 116, 139, 0.15) 1px, transparent 1px) !important;
+}
+[data-theme="apple-silver"] header {
+  background-color: rgba(245, 245, 247, 0.85) !important;
+  border-bottom-color: #e2e8f0 !important;
+  backdrop-filter: saturate(180%) blur(20px) !important;
+}
+[data-theme="apple-silver"] .surface-card,
+[data-theme="apple-silver"] .bg-slate-900,
+[data-theme="apple-silver"] .bg-slate-900\/95,
+[data-theme="apple-silver"] .bg-slate-900\/90,
+[data-theme="apple-silver"] .bg-slate-900\/85,
+[data-theme="apple-silver"] .bg-slate-900\/80,
+[data-theme="apple-silver"] .bg-slate-900\/75 {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  background-image: none !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.03) !important;
+}
+[data-theme="apple-silver"] .bg-slate-950,
+[data-theme="apple-silver"] .bg-slate-950\/90,
+[data-theme="apple-silver"] .bg-slate-950\/80,
+[data-theme="apple-silver"] .bg-slate-950\/70,
+[data-theme="apple-silver"] .bg-slate-950\/60 {
+  background-color: #f1f5f9 !important;
+  border-color: #e2e8f0 !important;
+}
+[data-theme="apple-silver"] .border-slate-800,
+[data-theme="apple-silver"] .border-slate-800\/90,
+[data-theme="apple-silver"] .border-slate-800\/80,
+[data-theme="apple-silver"] .border-slate-800\/60,
+[data-theme="apple-silver"] .border-slate-700,
+[data-theme="apple-silver"] .divide-slate-800 {
+  border-color: #e2e8f0 !important;
+}
+[data-theme="apple-silver"] .bg-slate-800,
+[data-theme="apple-silver"] .bg-slate-800\/80 {
+  background-color: #f1f5f9 !important;
+}
+[data-theme="apple-silver"] .hover\:bg-slate-800:hover,
+[data-theme="apple-silver"] .hover\:bg-slate-800\/80:hover,
+[data-theme="apple-silver"] .hover\:bg-slate-800\/70:hover {
+  background-color: #e2e8f0 !important;
+}
+[data-theme="apple-silver"] .interactive-card:hover {
+  box-shadow: 0 14px 30px -4px rgba(0, 113, 227, 0.12), 0 4px 10px -2px rgba(15, 23, 42, 0.04) !important;
+  border-color: rgba(0, 113, 227, 0.4) !important;
+}
+
+/* Apple Silver 强调色 (Apple Blue) */
+[data-theme="apple-silver"] .bg-indigo-600,
+[data-theme="apple-silver"] .bg-indigo-500 {
+  background-color: #0071e3 !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  box-shadow: 0 4px 12px rgba(0, 113, 227, 0.3) !important;
+}
+[data-theme="apple-silver"] .hover\:bg-indigo-500:hover,
+[data-theme="apple-silver"] .hover\:bg-indigo-600:hover {
+  background-color: #0077ed !important;
+}
+[data-theme="apple-silver"] .text-indigo-400,
+[data-theme="apple-silver"] .text-indigo-300,
+[data-theme="apple-silver"] .text-indigo-200 {
+  color: #0071e3 !important;
+}
+[data-theme="apple-silver"] .border-indigo-700\/40,
+[data-theme="apple-silver"] .border-indigo-700\/50,
+[data-theme="apple-silver"] .border-indigo-700\/60,
+[data-theme="apple-silver"] .border-indigo-600\/60 {
+  border-color: rgba(0, 113, 227, 0.35) !important;
+}
+[data-theme="apple-silver"] .bg-indigo-950,
+[data-theme="apple-silver"] .bg-indigo-950\/90,
+[data-theme="apple-silver"] .bg-indigo-950\/80,
+[data-theme="apple-silver"] .bg-indigo-950\/70,
+[data-theme="apple-silver"] .bg-indigo-950\/40 {
+  background-color: rgba(0, 113, 227, 0.08) !important;
+  color: #0071e3 !important;
+  border-color: rgba(0, 113, 227, 0.22) !important;
+}
+[data-theme="apple-silver"] .from-indigo-600 {
+  --tw-gradient-from: #0071e3 var(--tw-gradient-from-position) !important;
+}
+[data-theme="apple-silver"] .to-purple-500,
+[data-theme="apple-silver"] .to-violet-500 {
+  --tw-gradient-to: #0284c7 var(--tw-gradient-to-position) !important;
+}
+
+/* ==========================================================================
+   6. APPLE WARM THEME (🌤️ 苹果温润暖白 - 加州暖阳纸感米白护眼)
+   ========================================================================== */
+[data-theme="apple-warm"] {
+  background-color: #fbfbf9 !important;
+  color: #1c1917 !important;
+}
+[data-theme="apple-warm"] body,
+[data-theme="apple-warm"] .app-shell {
+  background-color: #fbfbf9 !important;
+  color: #1c1917 !important;
+}
+[data-theme="apple-warm"] .app-shell::before {
+  opacity: 0.1 !important;
+  background-image: linear-gradient(rgba(168, 162, 158, 0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(168, 162, 158, 0.18) 1px, transparent 1px) !important;
+}
+[data-theme="apple-warm"] header {
+  background-color: rgba(251, 251, 249, 0.85) !important;
+  border-bottom-color: #e7e5e4 !important;
+  backdrop-filter: saturate(180%) blur(20px) !important;
+}
+[data-theme="apple-warm"] .surface-card,
+[data-theme="apple-warm"] .bg-slate-900,
+[data-theme="apple-warm"] .bg-slate-900\/95,
+[data-theme="apple-warm"] .bg-slate-900\/90,
+[data-theme="apple-warm"] .bg-slate-900\/85,
+[data-theme="apple-warm"] .bg-slate-900\/80,
+[data-theme="apple-warm"] .bg-slate-900\/75 {
+  background-color: #ffffff !important;
+  border-color: #e7e5e4 !important;
+  background-image: none !important;
+  box-shadow: 0 4px 20px -2px rgba(28, 25, 23, 0.05), 0 1px 3px rgba(28, 25, 23, 0.03) !important;
+}
+[data-theme="apple-warm"] .bg-slate-950,
+[data-theme="apple-warm"] .bg-slate-950\/90,
+[data-theme="apple-warm"] .bg-slate-950\/80,
+[data-theme="apple-warm"] .bg-slate-950\/70,
+[data-theme="apple-warm"] .bg-slate-950\/60 {
+  background-color: #f5f4ef !important;
+  border-color: #e7e5e4 !important;
+}
+[data-theme="apple-warm"] .border-slate-800,
+[data-theme="apple-warm"] .border-slate-800\/90,
+[data-theme="apple-warm"] .border-slate-800\/80,
+[data-theme="apple-warm"] .border-slate-800\/60,
+[data-theme="apple-warm"] .border-slate-700,
+[data-theme="apple-warm"] .divide-slate-800 {
+  border-color: #e7e5e4 !important;
+}
+[data-theme="apple-warm"] .bg-slate-800,
+[data-theme="apple-warm"] .bg-slate-800\/80 {
+  background-color: #f5f4ef !important;
+}
+[data-theme="apple-warm"] .hover\:bg-slate-800:hover,
+[data-theme="apple-warm"] .hover\:bg-slate-800\/80:hover,
+[data-theme="apple-warm"] .hover\:bg-slate-800\/70:hover {
+  background-color: #e7e5e4 !important;
+}
+[data-theme="apple-warm"] .interactive-card:hover {
+  box-shadow: 0 14px 30px -4px rgba(234, 88, 12, 0.12), 0 4px 10px -2px rgba(28, 25, 23, 0.04) !important;
+  border-color: rgba(234, 88, 12, 0.4) !important;
+}
+
+/* Apple Warm 强调色 (California Warm Gold/Orange) */
+[data-theme="apple-warm"] .bg-indigo-600,
+[data-theme="apple-warm"] .bg-indigo-500 {
+  background-color: #ea580c !important;
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.3) !important;
+}
+[data-theme="apple-warm"] .hover\:bg-indigo-500:hover,
+[data-theme="apple-warm"] .hover\:bg-indigo-600:hover {
+  background-color: #f97316 !important;
+}
+[data-theme="apple-warm"] .text-indigo-400,
+[data-theme="apple-warm"] .text-indigo-300,
+[data-theme="apple-warm"] .text-indigo-200 {
+  color: #ea580c !important;
+}
+[data-theme="apple-warm"] .border-indigo-700\/40,
+[data-theme="apple-warm"] .border-indigo-700\/50,
+[data-theme="apple-warm"] .border-indigo-700\/60,
+[data-theme="apple-warm"] .border-indigo-600\/60 {
+  border-color: rgba(234, 88, 12, 0.35) !important;
+}
+[data-theme="apple-warm"] .bg-indigo-950,
+[data-theme="apple-warm"] .bg-indigo-950\/90,
+[data-theme="apple-warm"] .bg-indigo-950\/80,
+[data-theme="apple-warm"] .bg-indigo-950\/70,
+[data-theme="apple-warm"] .bg-indigo-950\/40 {
+  background-color: rgba(234, 88, 12, 0.08) !important;
+  color: #ea580c !important;
+  border-color: rgba(234, 88, 12, 0.22) !important;
+}
+[data-theme="apple-warm"] .from-indigo-600 {
+  --tw-gradient-from: #ea580c var(--tw-gradient-from-position) !important;
+}
+[data-theme="apple-warm"] .to-purple-500,
+[data-theme="apple-warm"] .to-violet-500 {
+  --tw-gradient-to: #d97706 var(--tw-gradient-to-position) !important;
+}
+
+/* ==========================================================================
+   SHARED LIGHT PALETTE ENHANCEMENTS FOR BOTH APPLE THEMES
+   (文字、输入框、表格、涨跌反差系统翻转)
+   ========================================================================== */
+[data-theme="apple-silver"] .text-slate-100,
+[data-theme="apple-silver"] .text-slate-200,
+[data-theme="apple-silver"] .text-slate-50,
+[data-theme="apple-warm"] .text-slate-100,
+[data-theme="apple-warm"] .text-slate-200,
+[data-theme="apple-warm"] .text-slate-50 {
+  color: #0f172a !important;
+}
+
+[data-theme="apple-silver"] .text-slate-300,
+[data-theme="apple-warm"] .text-slate-300 {
+  color: #1e293b !important;
+}
+
+[data-theme="apple-silver"] .text-slate-400,
+[data-theme="apple-warm"] .text-slate-400 {
+  color: #334155 !important;
+  font-weight: 500;
+}
+
+[data-theme="apple-silver"] .text-slate-500,
+[data-theme="apple-warm"] .text-slate-500 {
+  color: #475569 !important;
+}
+
+[data-theme="apple-silver"] .text-slate-600,
+[data-theme="apple-warm"] .text-slate-600 {
+  color: #64748b !important;
+}
+
+/* 输入框与表单控件 */
+[data-theme="apple-silver"] input:not([type="checkbox"]):not([type="radio"]),
+[data-theme="apple-silver"] select,
+[data-theme="apple-silver"] textarea,
+[data-theme="apple-warm"] input:not([type="checkbox"]):not([type="radio"]),
+[data-theme="apple-warm"] select,
+[data-theme="apple-warm"] textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+[data-theme="apple-silver"] input::placeholder,
+[data-theme="apple-silver"] textarea::placeholder,
+[data-theme="apple-warm"] input::placeholder,
+[data-theme="apple-warm"] textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* 表格样式翻转 */
+[data-theme="apple-silver"] table th,
+[data-theme="apple-silver"] thead tr,
+[data-theme="apple-warm"] table th,
+[data-theme="apple-warm"] thead tr {
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+  border-bottom-color: #e2e8f0 !important;
+}
+
+[data-theme="apple-silver"] table tr,
+[data-theme="apple-warm"] table tr {
+  border-bottom-color: #f1f5f9 !important;
+}
+
+[data-theme="apple-silver"] table tbody tr:hover {
+  background-color: #f1f5f9 !important;
+}
+
+[data-theme="apple-warm"] table tbody tr:hover {
+  background-color: #f5f4ef !important;
+}
+
+/* 股票红涨绿跌针对浅色底的高对比度增强 */
+[data-theme="apple-silver"] .text-rose-400,
+[data-theme="apple-silver"] .text-rose-300,
+[data-theme="apple-silver"] .text-red-400,
+[data-theme="apple-silver"] .text-red-500,
+[data-theme="apple-warm"] .text-rose-400,
+[data-theme="apple-warm"] .text-rose-300,
+[data-theme="apple-warm"] .text-red-400,
+[data-theme="apple-warm"] .text-red-500 {
+  color: #dc2626 !important;
+}
+
+[data-theme="apple-silver"] .text-emerald-400,
+[data-theme="apple-silver"] .text-emerald-300,
+[data-theme="apple-silver"] .text-green-400,
+[data-theme="apple-silver"] .text-green-500,
+[data-theme="apple-warm"] .text-emerald-400,
+[data-theme="apple-warm"] .text-emerald-300,
+[data-theme="apple-warm"] .text-green-400,
+[data-theme="apple-warm"] .text-green-500 {
+  color: #059669 !important;
+}
+
+[data-theme="apple-silver"] .bg-rose-950,
+[data-theme="apple-silver"] .bg-rose-950\/80,
+[data-theme="apple-silver"] .bg-rose-950\/60,
+[data-theme="apple-silver"] .bg-rose-950\/40,
+[data-theme="apple-warm"] .bg-rose-950,
+[data-theme="apple-warm"] .bg-rose-950\/80,
+[data-theme="apple-warm"] .bg-rose-950\/60,
+[data-theme="apple-warm"] .bg-rose-950\/40 {
+  background-color: rgba(225, 29, 72, 0.1) !important;
+  color: #dc2626 !important;
+  border-color: rgba(225, 29, 72, 0.22) !important;
+}
+
+[data-theme="apple-silver"] .bg-emerald-950,
+[data-theme="apple-silver"] .bg-emerald-950\/80,
+[data-theme="apple-silver"] .bg-emerald-950\/60,
+[data-theme="apple-silver"] .bg-emerald-950\/40,
+[data-theme="apple-warm"] .bg-emerald-950,
+[data-theme="apple-warm"] .bg-emerald-950\/80,
+[data-theme="apple-warm"] .bg-emerald-950\/60,
+[data-theme="apple-warm"] .bg-emerald-950\/40 {
+  background-color: rgba(5, 150, 105, 0.1) !important;
+  color: #059669 !important;
+  border-color: rgba(5, 150, 105, 0.22) !important;
+}
+
+/* 浅色模式滚动条优化 */
+[data-theme="apple-silver"] ::-webkit-scrollbar-track,
+[data-theme="apple-warm"] ::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+[data-theme="apple-silver"] ::-webkit-scrollbar-thumb,
+[data-theme="apple-warm"] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1 !important;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+[data-theme="apple-silver"] ::-webkit-scrollbar-thumb:hover,
+[data-theme="apple-warm"] ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8 !important;
+}
+
+/* ==========================================================================
+   GLOBAL TYPOGRAPHY ENHANCEMENTS (全站排版与字迹扎实度强化)
+   ========================================================================== */
+/* 小号辅助文字清晰度提升，强化字间距与笔画扎实度 */
+.text-xs,
+[class*="text-[10px]"],
+[class*="text-[11px]"],
+[class*="text-[12px]"] {
+  letter-spacing: 0.01em;
+}
+
+/* 保证表格单元格和行情价格的笔画饱满度与几何对齐精度 */
+table td, table th {
+  text-rendering: geometricPrecision;
+}
+
+/* 暗色主题下次级说明文字清晰度微调，杜绝暗底发暗 */
+:root:not([data-theme^="apple-"]) .text-slate-400,
+[data-theme="indigo"] .text-slate-400,
+[data-theme="gold"] .text-slate-400,
+[data-theme="emerald"] .text-slate-400,
+[data-theme="cyan"] .text-slate-400,
+[data-theme="rose"] .text-slate-400 {
+  color: #94a3b8;
+}
+
+/* ==========================================================================
+   MODAL & DIALOG BACKDROP ELEVATION (弹窗精致悬浮与全屏遮罩景深重塑)
+   ========================================================================== */
+/* 强制保护所有全屏遮罩为高通透磨砂，禁止实心背景覆盖整站内容 */
+.fixed.inset-0[class*="z-50"],
+.fixed.inset-0[class*="z-["] {
+  background-color: rgba(2, 6, 23, 0.65) !important;
+  backdrop-filter: blur(8px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(150%) !important;
+  transition: opacity 0.2s ease;
+}
+
+/* 苹果浅色主题下：透光微暗景深毛玻璃，让背后看板清晰透视且有层次感 */
+[data-theme^="apple-"] .fixed.inset-0[class*="z-50"],
+[data-theme^="apple-"] .fixed.inset-0[class*="z-["] {
+  background-color: rgba(15, 23, 42, 0.32) !important;
+  backdrop-filter: blur(14px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(180%) !important;
+}
+
+/* 弹窗实体卡片入场微动效与柔光阴影 */
+.modal-animate-in {
+  animation: modalScaleUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes modalScaleUp {
+  0% {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
   }
 }
+
+
+

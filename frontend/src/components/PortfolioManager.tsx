@@ -1,9 +1,19 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, Upload, Trash2, Clipboard, FileText, Check, FolderPlus, Edit3, Layers, ArrowUpDown, ArrowUp, ArrowDown, MoveRight, AlertTriangle, Archive } from 'lucide-react';
+import { Plus, Upload, Trash2, Clipboard, FileText, Check, FolderPlus, Edit3, Layers, ArrowUpDown, ArrowUp, ArrowDown, MoveRight, AlertTriangle, Archive, X, Tag, PlusCircle, BookmarkCheck } from 'lucide-react';
 import { PositionItem, WatchlistItem } from '../types';
 import { AccountFundBar } from './AccountFundBar';
 
 import axios from 'axios';
+
+// Helper to normalize and extract multiple sector/category tags from a string
+export const getWatchlistCategories = (category?: string): string[] => {
+  if (!category) return ['默认自选'];
+  const parts = category
+    .split(/[,，/、|;；\s]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? Array.from(new Set(parts)) : ['默认自选'];
+};
 
 interface PortfolioManagerProps {
   positions: PositionItem[];
@@ -60,20 +70,38 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
   const [strategyTag, setStrategyTag] = useState('长线持有');
   const [categoryTag, setCategoryTag] = useState('默认自选');
 
-  // Compute Distinct Categories and Counts for Watchlists
+  // Multi-Category Modal & State for individual stock
+  const [managingStock, setManagingStock] = useState<WatchlistItem | null>(null);
+  const [stockCategories, setStockCategories] = useState<string[]>([]);
+  const [newCustomCategory, setNewCustomCategory] = useState<string>('');
+
+  // Compute Distinct Categories and Counts for Watchlists (support multiple sectors per stock)
   const categoryStats = useMemo(() => {
     const counts: Record<string, number> = {};
     watchlists.forEach((w) => {
-      const cat = w.category || '默认自选';
-      counts[cat] = (counts[cat] || 0) + 1;
+      const cats = getWatchlistCategories(w.category);
+      cats.forEach((cat) => {
+        counts[cat] = (counts[cat] || 0) + 1;
+      });
     });
     return Object.entries(counts).map(([name, count]) => ({ name, count }));
   }, [watchlists]);
 
+  // All distinct category names for selection
+  const allAvailableCategories = useMemo(() => {
+    const set = new Set<string>();
+    categoryStats.forEach(c => set.add(c.name));
+    if (!set.has('默认自选')) set.add('默认自选');
+    return Array.from(set);
+  }, [categoryStats]);
+
   // Filtered Watchlists by Selected Sector Tab
   const filteredWatchlists = useMemo(() => {
     if (selectedCategory === 'ALL') return watchlists;
-    return watchlists.filter((w) => (w.category || '默认自选') === selectedCategory);
+    return watchlists.filter((w) => {
+      const cats = getWatchlistCategories(w.category);
+      return cats.includes(selectedCategory);
+    });
   }, [watchlists, selectedCategory]);
 
   const handleSort = (field: string) => {
@@ -217,18 +245,72 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     }
   };
 
-  // Batch Relocate Action
-  const handleBatchRelocate = async (targetCategory: string) => {
+  // Batch Relocate / Append Action
+  const handleBatchRelocate = async (targetCategory: string, mode: 'append' | 'replace' = 'append') => {
     if (selectedIds.length === 0 || !targetCategory) return;
     try {
       await axios.post('/api/v1/stocks/watchlists/batch-relocate', {
         ids: selectedIds,
-        category: targetCategory
+        category: targetCategory,
+        mode
       });
       setSelectedIds([]);
       onRefresh();
     } catch (err) {
-      alert('批量划转板块失败');
+      alert(mode === 'append' ? '批量追加板块失败' : '批量划转板块失败');
+    }
+  };
+
+  // Stock Multi-Category Modal Handlers
+  const handleOpenCategoryModal = (stock: WatchlistItem) => {
+    setManagingStock(stock);
+    setStockCategories(getWatchlistCategories(stock.category));
+    setNewCustomCategory('');
+  };
+
+  const handleToggleStockCategory = (cat: string) => {
+    setStockCategories((prev) => {
+      if (prev.includes(cat)) {
+        return prev.filter((c) => c !== cat);
+      } else {
+        return [...prev, cat];
+      }
+    });
+  };
+
+  const handleAddNewCustomCategory = () => {
+    const trimmed = newCustomCategory.trim();
+    if (!trimmed) return;
+    if (!stockCategories.includes(trimmed)) {
+      setStockCategories((prev) => [...prev, trimmed]);
+    }
+    setNewCustomCategory('');
+  };
+
+  const handleSaveStockCategories = async () => {
+    if (!managingStock) return;
+    try {
+      const catsToSave = stockCategories.length > 0 ? stockCategories : ['默认自选'];
+      await axios.put(`/api/v1/stocks/watchlists/${managingStock.id}/category`, {
+        categories: catsToSave
+      });
+      setManagingStock(null);
+      onRefresh();
+    } catch (err) {
+      alert('保存板块设置失败');
+    }
+  };
+
+  const handleRemoveSingleCategory = async (watchlistId: number, catToRemove: string, currentCategoryStr?: string) => {
+    const currentCats = getWatchlistCategories(currentCategoryStr);
+    const remaining = currentCats.filter((c) => c !== catToRemove);
+    try {
+      await axios.put(`/api/v1/stocks/watchlists/${watchlistId}/category`, {
+        categories: remaining.length > 0 ? remaining : ['默认自选']
+      });
+      onRefresh();
+    } catch (err) {
+      alert('移出板块失败');
     }
   };
 
@@ -605,24 +687,43 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2.5">
             {activeTab === 'watchlist' && (
-              <select
-                defaultValue=""
-                onChange={(e) => {
-                  if (e.target.value) {
-                    handleBatchRelocate(e.target.value);
-                    e.target.value = "";
-                  }
-                }}
-                className="bg-slate-950 border border-indigo-800/80 text-indigo-200 text-xs rounded-xl px-3 py-1.5 focus:outline-none cursor-pointer"
-              >
-                <option value="" disabled>批量划转归属板块...</option>
-                {categoryStats.map(c => (
-                  <option key={c.name} value={c.name}>划转至【{c.name}】</option>
-                ))}
-                <option value="默认自选">划转至【默认自选】</option>
-              </select>
+              <>
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleBatchRelocate(e.target.value, 'append');
+                      e.target.value = "";
+                    }
+                  }}
+                  className="bg-slate-950 border border-indigo-700/80 text-indigo-200 text-xs rounded-xl px-3 py-1.5 focus:outline-none cursor-pointer"
+                  title="为选中的股票追加板块标签（保留该股票原有的其他板块）"
+                >
+                  <option value="" disabled>➕ 批量加入板块 (保留原有)...</option>
+                  {allAvailableCategories.map(cat => (
+                    <option key={cat} value={cat}>加入【{cat}】</option>
+                  ))}
+                </select>
+
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleBatchRelocate(e.target.value, 'replace');
+                      e.target.value = "";
+                    }
+                  }}
+                  className="bg-slate-950 border border-slate-700 text-slate-300 text-xs rounded-xl px-3 py-1.5 focus:outline-none cursor-pointer"
+                  title="将选中的股票唯一划转至此板块（覆盖原有板块）"
+                >
+                  <option value="" disabled>🔄 批量替换归属板块...</option>
+                  {allAvailableCategories.map(cat => (
+                    <option key={cat} value={cat}>替换为【{cat}】</option>
+                  ))}
+                </select>
+              </>
             )}
 
             <button
@@ -1052,18 +1153,40 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                         <div className="text-xs font-mono text-slate-400">{w.symbol}</div>
                       </td>
                       <td className="py-3.5 px-4 text-center">
-                        {/* Interactive Sector Badge with Relocation Selector */}
-                        <select
-                          value={w.category || '默认自选'}
-                          onChange={(e) => handleChangeCategory(w.id, e.target.value)}
-                          className="bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 text-xs rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500 cursor-pointer"
-                        >
-                          <option value={w.category}>{w.category}</option>
-                          {categoryStats.filter(c => c.name !== w.category).map(c => (
-                            <option key={c.name} value={c.name}>{c.name}</option>
+                        {/* Multi-Sector Badges with Quick Remove and Manage Button */}
+                        <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[260px] mx-auto">
+                          {getWatchlistCategories(w.category).map((cat) => (
+                            <span
+                              key={cat}
+                              className="group inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg text-[11px] font-medium bg-indigo-950/90 text-indigo-200 border border-indigo-800/60 shadow-sm"
+                            >
+                              <span>{cat}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveSingleCategory(w.id, cat, w.category);
+                                }}
+                                title={`从【${cat}】板块中移出`}
+                                className="opacity-60 hover:opacity-100 hover:text-red-400 transition-opacity ml-0.5"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
                           ))}
-                          <option value="默认自选">默认自选</option>
-                        </select>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenCategoryModal(w);
+                            }}
+                            title="管理该股票归属的所有板块"
+                            className="inline-flex items-center space-x-0.5 px-1.5 py-0.5 rounded-lg text-[10px] text-slate-400 hover:text-indigo-300 hover:bg-slate-800/80 border border-dashed border-slate-700 hover:border-indigo-500/60 transition-all"
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                            <span>板块</span>
+                          </button>
+                        </div>
                       </td>
                       <td className="py-3.5 px-4 text-right font-mono font-semibold text-slate-100">
                         ¥{w.current_price?.toFixed(w.current_price && w.current_price < 10 ? 3 : 2)}
@@ -1164,10 +1287,13 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
               </>
             ) : (
               <div>
-                <label className="block text-xs text-slate-400 mb-1">归属板块分类</label>
+                <label className="block text-xs text-slate-400 mb-1 flex items-center justify-between">
+                  <span>归属板块分类</span>
+                  <span className="text-[10px] text-indigo-400">支持多板块，逗号隔开</span>
+                </label>
                 <input
                   type="text"
-                  placeholder="如: 半导体 / 高股息 / 默认自选"
+                  placeholder="如: 半导体, 科创50, 核心监控"
                   value={categoryTag}
                   onChange={(e) => setCategoryTag(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
@@ -1188,8 +1314,16 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
       {/* Flush Import Modal */}
       {isImportModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="surface-card rounded-2xl max-w-2xl w-full p-5 sm:p-6 space-y-5 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsImportModalOpen(false);
+          }}
+        >
+          <div
+            className="modal-animate-in surface-card rounded-2xl max-w-xl w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-slate-700/60 my-auto max-h-[88vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
                 <Clipboard className="w-5 h-5 text-indigo-400" />
@@ -1197,7 +1331,8 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
               </h3>
               <button
                 onClick={() => setIsImportModalOpen(false)}
-                className="text-slate-400 hover:text-slate-200"
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800/50 transition-colors"
+                title="按 Esc 或点击空白处退出"
               >
                 ✕
               </button>
@@ -1372,6 +1507,148 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Manage Multi-Categories Modal for Individual Stock */}
+      {managingStock && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto bg-slate-950/60 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setManagingStock(null);
+          }}
+        >
+          <div
+            className="modal-animate-in surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-slate-700/60 my-auto max-h-[88vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <Tag className="w-5 h-5 text-indigo-400" />
+                <div>
+                  <h3 className="font-bold text-sm text-slate-100 flex items-center gap-1.5">
+                    <span>设置归属板块</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 font-mono">
+                      {managingStock.name || managingStock.symbol}
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">勾选让此股票同时属于多个板块</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setManagingStock(null)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800/50 transition-colors"
+                title="关闭"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Current Active Tags Display */}
+            <div className="space-y-1.5">
+              <div className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <span>当前所属板块 ({stockCategories.length})：</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2.5 bg-slate-950 rounded-xl border border-slate-800/80 items-center">
+                {stockCategories.length === 0 ? (
+                  <span className="text-xs text-slate-500 italic">未归属任何板块（保存时将自动归入默认自选）</span>
+                ) : (
+                  stockCategories.map(cat => (
+                    <span
+                      key={cat}
+                      className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-indigo-900/60 text-indigo-200 border border-indigo-700/50"
+                    >
+                      <span>{cat}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleStockCategory(cat)}
+                        className="hover:text-red-400 transition-colors ml-1"
+                        title="移出此板块"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Quick Checkbox List of All Categories */}
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-slate-300">快速勾选现有板块：</div>
+              <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1.5 bg-slate-950/60 rounded-xl border border-slate-800/80">
+                {allAvailableCategories.map(cat => {
+                  const isChecked = stockCategories.includes(cat);
+                  return (
+                    <label
+                      key={cat}
+                      className={`flex items-center space-x-2 p-2 rounded-lg cursor-pointer text-xs transition-all border ${
+                        isChecked
+                          ? 'bg-indigo-950/80 text-indigo-200 border-indigo-700/80 font-semibold'
+                          : 'bg-slate-900/50 text-slate-400 border-slate-800/50 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleStockCategory(cat)}
+                        className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 cursor-pointer"
+                      />
+                      <span className="truncate">{cat}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Add Custom Sector Input */}
+            <div className="space-y-1.5 pt-1">
+              <div className="text-xs font-semibold text-slate-300">新建并加入新板块：</div>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="text"
+                  placeholder="输入新板块名称，如: 华为概念"
+                  value={newCustomCategory}
+                  onChange={(e) => setNewCustomCategory(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddNewCustomCategory();
+                    }
+                  }}
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddNewCustomCategory}
+                  disabled={!newCustomCategory.trim()}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 text-xs font-medium rounded-xl border border-slate-700 transition-colors flex items-center space-x-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>添加</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="flex items-center justify-end space-x-2.5 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setManagingStock(null)}
+                className="px-4 py-2 bg-slate-800 text-slate-300 text-xs rounded-xl hover:bg-slate-700 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveStockCategories}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl shadow-md transition-all flex items-center space-x-1.5"
+              >
+                <Check className="w-4 h-4" />
+                <span>保存多板块配置</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

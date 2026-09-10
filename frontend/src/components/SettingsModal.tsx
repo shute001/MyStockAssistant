@@ -32,6 +32,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [pushTestResult, setPushTestResult] = useState<{ status: string; message: string } | null>(null);
 
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [onClose]);
+
+  useEffect(() => {
     axios.get('/api/v1/config/push').then((res) => {
       if (res.data) {
         setPushChannel(res.data.channel || 'serverchan');
@@ -132,15 +145,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="surface-card rounded-2xl max-w-xl w-full p-5 sm:p-6 space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="modal-animate-in surface-card rounded-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-slate-700/60 my-auto max-h-[88vh] overflow-y-auto custom-scrollbar"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
-            <Key className="w-5 h-5 text-indigo-400" />
-            系统配置中心 (API Key & 微信推送)
+          <h3 className="font-bold text-sm sm:text-base text-slate-100 flex items-center gap-2">
+            <Key className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-400" />
+            <span>系统配置中心 (API Key & 微信推送)</span>
           </h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200">
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800/50 transition-colors"
+            title="按 Esc 或点击空白处退出"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>

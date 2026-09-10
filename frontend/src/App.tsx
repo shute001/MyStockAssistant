@@ -1,8 +1,7 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import axios from 'axios';
 import { Header } from './components/Header';
-import { AccountFundBar } from './components/AccountFundBar';
-import { PositionItem, WatchlistItem, LLMConfigItem } from './types';
+import { PositionItem, WatchlistItem, LLMConfigItem, ThemeId } from './types';
 
 const Dashboard = React.lazy(() => import('./components/Dashboard').then((module) => ({ default: module.Dashboard })));
 const PortfolioManager = React.lazy(() => import('./components/PortfolioManager').then((module) => ({ default: module.PortfolioManager })));
@@ -24,6 +23,16 @@ export const App: React.FC = () => {
   const [llmConfigs, setLlmConfigs] = useState<LLMConfigItem[]>([]);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [dataError, setDataError] = useState<string | null>(null);
+
+  // Theme Management
+  const [theme, setTheme] = useState<ThemeId>(() => {
+    return (localStorage.getItem('app_theme') as ThemeId) || 'indigo';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('app_theme', theme);
+  }, [theme]);
 
   const [selectedStockSymbol, setSelectedStockSymbol] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
@@ -106,7 +115,7 @@ export const App: React.FC = () => {
     : allKnownStocks;
 
   return (
-    <div className="app-shell text-slate-100 flex flex-col font-sans">
+    <div className="app-shell text-slate-100 flex flex-col font-sans" data-theme={theme}>
       {/* Top Header */}
       <Header
         activeTab={activeTab}
@@ -115,6 +124,9 @@ export const App: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onRefreshData={fetchAllData}
         isRefreshing={isRefreshing}
+        onOpenSearch={() => setIsSearchOpen(true)}
+        currentTheme={theme}
+        onThemeChange={setTheme}
       />
 
       {dataError && (
@@ -130,15 +142,12 @@ export const App: React.FC = () => {
       {/* Main App Workspace */}
       <main className="app-content flex-1 max-w-7xl w-full mx-auto px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         {activeTab === 'dashboard' && (
-          <>
-            <AccountFundBar onRefreshParent={fetchAllData} />
-            <Dashboard
-              positions={positions}
-              watchlists={watchlists}
-              onTriggerAI={handleTriggerAIFromDashboard}
-              onSelectStock={(symbol) => setSelectedStockSymbol(symbol)}
-            />
-          </>
+          <Dashboard
+            positions={positions}
+            watchlists={watchlists}
+            onTriggerAI={handleTriggerAIFromDashboard}
+            onSelectStock={(symbol) => setSelectedStockSymbol(symbol)}
+          />
         )}
 
         {activeTab === 'portfolio' && (
@@ -196,8 +205,16 @@ export const App: React.FC = () => {
 
       {/* Global Quick Search Modal (Ctrl+K) */}
       {isSearchOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-start justify-center pt-20 p-4">
-          <div className="surface-card rounded-2xl max-w-lg w-full p-4 space-y-3 shadow-2xl border border-indigo-500/40">
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center pt-20 sm:pt-24 p-4 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsSearchOpen(false);
+          }}
+        >
+          <div
+            className="modal-animate-in surface-card rounded-2xl max-w-lg w-full p-4 space-y-3 shadow-2xl border border-indigo-500/40"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <span className="text-xs font-bold text-indigo-300">🔍 全局快捷股票搜索 (Esc 退出)</span>
               <span className="px-2 py-0.5 text-[10px] bg-slate-800 text-slate-400 rounded-md font-mono">Ctrl + K</span>

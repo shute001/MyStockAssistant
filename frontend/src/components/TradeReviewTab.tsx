@@ -9,7 +9,6 @@ import {
   Send, Bot, User, CornerDownLeft, Award, Zap, BookOpen
 } from 'lucide-react';
 import { TradeRecordItem, AgentMemoryItem, MasterPlaybookItem } from '../types';
-import { AccountFundBar } from './AccountFundBar';
 
 interface TradeReviewTabProps {
   onSelectStock: (symbol: string) => void;
@@ -645,110 +644,107 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
   return (
     <div className="space-y-6">
-      {/* Flush-style Account Fund Bar */}
-      <AccountFundBar onRefreshParent={onRefreshAll} />
-
       {/* Top Banner & Quick Actions */}
-      <div className="surface-card bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 rounded-2xl p-5 sm:p-6">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="surface-card bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 rounded-2xl p-5 sm:p-6 border border-slate-800">
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5">
           <div className="flex items-center space-x-4">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 shrink-0">
               <Brain className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                <span>Trade Review Agent (AI 交易复盘诊所)</span>
-                <span className="px-2 py-0.5 text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full">
-                  持续进化 Agent
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-bold text-slate-100">
+                  Trade Review Agent (AI 交易复盘诊所)
+                </h2>
+                <span className="px-2 py-0.5 text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-full font-mono">
+                  持续进化
                 </span>
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                记录每日买卖理由 ➔ Agent 记忆反思 ➔ 诊断买卖点与交易心理 ➔ 积累演化教训
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                记录每日买卖理由 ➔ Agent 记忆反思 ➔ 诊断买卖点与交易心理 ➔ 沉淀实战战法
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              onClick={handleOpenAddModal}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-xl shadow-lg shadow-indigo-600/20 transition-all flex items-center space-x-1.5"
-            >
-              <Plus className="w-4 h-4" />
-              <span>新增交易日志</span>
-            </button>
-
-            <button
-              onClick={() => setIsImportModalOpen(true)}
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-900/50 font-medium text-xs rounded-xl transition-all flex items-center space-x-1.5"
-            >
-              <Clipboard className="w-4 h-4" />
-              <span>导入交割单</span>
-            </button>
-
-            <button
-              onClick={handleClearAllTrades}
-              className="px-3.5 py-2 bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/50 font-medium text-xs rounded-xl transition-all flex items-center space-x-1.5"
-              title="清空数据库中所有历史交易记录，方便全新重新导入"
-            >
-              <Trash2 className="w-4 h-4 text-rose-400" />
-              <span>清空交易记录</span>
-            </button>
-
-            <button
-              onClick={handleStartAgentReview}
-              disabled={isAgentRunning || isScreenerRunning}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold text-white shadow-lg transition-all flex items-center space-x-1.5 ${
-                isAgentRunning 
-                  ? 'bg-purple-800 opacity-80 cursor-not-allowed animate-pulse' 
-                  : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 shadow-purple-600/30'
-              }`}
-            >
-              <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>{isAgentRunning ? 'Agent 复盘诊断中...' : '一键生成复盘报告'}</span>
-            </button>
-
-            <button
-              onClick={handleStartScreenerAgent}
-              disabled={isScreenerRunning || isAgentRunning}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold text-white shadow-lg transition-all flex items-center space-x-1.5 ${
-                isScreenerRunning 
-                  ? 'bg-emerald-800 opacity-80 cursor-not-allowed animate-pulse' 
-                  : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-600/30'
-              }`}
-            >
-              <Cpu className="w-4 h-4 text-emerald-200" />
-              <span>{isScreenerRunning ? '智能选股筛选中...' : '🎯 运行智能选股 Agent'}</span>
-            </button>
-
-            <button
-              onClick={() => setIsChatModalOpen(true)}
-              className="px-4 py-2 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 font-semibold text-xs rounded-xl shadow-lg transition-all flex items-center space-x-1.5"
-            >
-              <MessageSquare className="w-4 h-4 text-purple-400" />
-              <span>💬 与 Agent 自由对话</span>
-            </button>
-
-            <button
-              onClick={() => onOpenSettings?.()}
-              className="px-3.5 py-2 bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 font-semibold text-xs rounded-xl shadow-lg transition-all flex items-center space-x-1.5"
-              title="配置 Server酱 / PushPlus 微信推送 Key"
-            >
-              <Send className="w-4 h-4 text-emerald-400" />
-              <span>📱 微信推送设置</span>
-            </button>
-
-
-            {agentReportMd && (
+          {/* Action Button Groups */}
+          <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-2.5 w-full lg:w-auto">
+            {/* Group 1: Data Management */}
+            <div className="flex items-center gap-1.5 p-1 bg-slate-950/80 border border-slate-800 rounded-xl">
               <button
-                onClick={() => reportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                className="px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold rounded-xl transition-all flex items-center space-x-1 shadow-lg shadow-amber-500/10"
+                onClick={handleOpenAddModal}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs rounded-lg shadow transition-all flex items-center space-x-1"
+                title="新增一条交易记录与心得"
               >
-                <span>查看下方报告 ↓</span>
+                <Plus className="w-3.5 h-3.5" />
+                <span>记一笔</span>
               </button>
-            )}
+
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="px-3 py-1.5 text-indigo-300 hover:text-white hover:bg-slate-800 font-medium text-xs rounded-lg transition-all flex items-center space-x-1"
+                title="粘贴同花顺历史成交交割单"
+              >
+                <Clipboard className="w-3.5 h-3.5" />
+                <span>导入交割单</span>
+              </button>
+
+              <button
+                onClick={handleClearAllTrades}
+                className="p-1.5 text-rose-400 hover:text-rose-200 hover:bg-rose-950/50 rounded-lg transition-all"
+                title="清空历史交易数据"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Group 2: AI Capabilities */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleStartAgentReview}
+                disabled={isAgentRunning || isScreenerRunning}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold text-white shadow-md transition-all flex items-center space-x-1.5 ${
+                  isAgentRunning 
+                    ? 'bg-purple-800 opacity-80 cursor-not-allowed animate-pulse' 
+                    : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 shadow-purple-600/25'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                <span>{isAgentRunning ? '诊断生成中...' : '生成复盘报告'}</span>
+              </button>
+
+              <button
+                onClick={handleStartScreenerAgent}
+                disabled={isScreenerRunning || isAgentRunning}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold text-white shadow-md transition-all flex items-center space-x-1.5 ${
+                  isScreenerRunning 
+                    ? 'bg-emerald-800 opacity-80 cursor-not-allowed animate-pulse' 
+                    : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-600/25'
+                }`}
+              >
+                <Cpu className="w-3.5 h-3.5 text-emerald-200" />
+                <span>{isScreenerRunning ? '选股中...' : '智能选股 Agent'}</span>
+              </button>
+
+              <button
+                onClick={() => setIsChatModalOpen(true)}
+                className="px-3 py-2 bg-indigo-950/90 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/60 font-medium text-xs rounded-xl shadow transition-all flex items-center space-x-1.5"
+                title="向 AI 交易教练提问"
+              >
+                <MessageSquare className="w-3.5 h-3.5 text-purple-400" />
+                <span>教练对话</span>
+              </button>
+
+              {agentReportMd && (
+                <button
+                  onClick={() => reportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  className="px-3 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold rounded-xl transition-all flex items-center space-x-1 shadow-lg shadow-amber-500/10"
+                >
+                  <span>查看报告 ↓</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
-
 
         {/* Trade Quantitative Metrics Banner */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 mt-5 pt-4 border-t border-slate-800/80">
@@ -885,14 +881,39 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Trade Log Table (2 cols) */}
         <div className="surface-card lg:col-span-2 rounded-2xl p-4 sm:p-5 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between pb-1 border-b border-slate-800/80">
             <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
               <Calendar className="w-4 h-4 text-indigo-400" />
               <span>每日交易日志记录</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">
+                {stats.total_trades}笔
+              </span>
             </h3>
-            <button onClick={fetchTradeData} className="p-1 text-slate-400 hover:text-slate-200">
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleOpenAddModal}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow transition-all flex items-center space-x-1"
+                title="新增一条买卖交易记录"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>记一笔</span>
+              </button>
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="px-2.5 py-1.5 bg-slate-950 hover:bg-slate-850 border border-slate-800 text-indigo-300 hover:text-indigo-200 text-xs rounded-xl transition-all flex items-center space-x-1"
+                title="粘贴或上传同花顺交割单"
+              >
+                <Clipboard className="w-3.5 h-3.5" />
+                <span>导入交割单</span>
+              </button>
+              <button
+                onClick={fetchTradeData}
+                className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+                title="刷新交易数据"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
 
           {/* Multi-Criteria Filter Bar */}
@@ -1052,28 +1073,41 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                       <td className="py-3 px-3 text-right font-mono font-bold text-slate-100">
                         ¥{t.amount.toLocaleString()}
                       </td>
-                      <td className="py-3 px-3 text-slate-300 max-w-xs" title={t.strategy_reason}>
+                      <td
+                        className="py-3 px-3 text-slate-300 max-w-xs cursor-pointer hover:bg-slate-800/40 rounded transition-colors group/cell"
+                        onClick={() => handleOpenEditReason(t)}
+                        title="点击快速编辑此条记录的买卖心得与交易理由"
+                      >
                         <div className="flex items-center justify-between">
-                          <span className="truncate flex items-center gap-1">
+                          <span className="truncate flex items-center gap-1.5">
                             <MessageSquare className="w-3 h-3 text-indigo-400 flex-shrink-0" />
-                            <span>{t.strategy_reason || <span className="text-slate-600 italic">点击添加心得/理由</span>}</span>
+                            <span className="group-hover/cell:text-indigo-300 transition-colors">
+                              {t.strategy_reason || <span className="text-slate-500 italic">点击添加交易理由...</span>}
+                            </span>
                           </span>
-                          <button
-                            onClick={() => handleOpenEditReason(t)}
-                            className="ml-1.5 p-1 text-slate-400 hover:text-indigo-300 hover:bg-slate-800 rounded transition-colors flex-shrink-0"
-                            title="编辑买卖理由与心得"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
+                          <span className="opacity-0 group-hover/cell:opacity-100 p-0.5 text-indigo-400 text-[10px] flex-shrink-0">
+                            ✏️
+                          </span>
                         </div>
                       </td>
-                      <td className="py-3 px-3 text-center">
-                        <button
-                          onClick={() => handleDeleteTrade(t.id)}
-                          className="p-1 text-slate-500 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center space-x-1.5">
+                          <button
+                            onClick={() => handleOpenEditReason(t)}
+                            className="px-2 py-1 bg-slate-950 hover:bg-indigo-950/60 text-slate-300 hover:text-indigo-200 border border-slate-700/80 hover:border-indigo-600/60 rounded-lg text-xs flex items-center gap-1 transition-all"
+                            title="编辑此笔交易(价格、数量、成交时间与买卖理由)"
+                          >
+                            <Edit3 className="w-3 h-3 text-indigo-400" />
+                            <span>编辑</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteTrade(t.id)}
+                            className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition-colors"
+                            title="删除此笔交易记录"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -1149,24 +1183,29 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
 
         {/* Right: Agent Memory Vault (1 col) */}
-        <div className="surface-card rounded-2xl p-5 space-y-4 flex flex-col justify-between">
-          <div>
+        <div className="surface-card rounded-2xl p-5 flex flex-col h-full">
+          <div className="flex flex-col flex-1 min-h-0">
             <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
                 <Brain className="w-4 h-4 text-purple-400" />
                 <span>Agent 进化记忆与指导规则库</span>
+                {memories.length > 0 && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-950/80 text-purple-300 border border-purple-800/40 font-mono">
+                    {memories.length}条
+                  </span>
+                )}
               </h3>
               <div className="flex items-center space-x-1.5">
                 <button
                   onClick={() => setIsExtractModalOpen(true)}
-                  className="px-2 py-1 bg-amber-950 hover:bg-amber-900 border border-amber-700/50 text-amber-300 text-[11px] rounded-lg font-semibold flex items-center gap-1"
+                  className="px-2 py-1 bg-amber-950 hover:bg-amber-900 border border-amber-700/50 text-amber-300 text-[11px] rounded-lg font-semibold flex items-center gap-1 transition-colors"
                 >
                   <Sparkles className="w-3 h-3 text-amber-400" />
                   <span>AI 萃取</span>
                 </button>
                 <button
                   onClick={() => setIsMemoryModalOpen(true)}
-                  className="px-2 py-1 bg-purple-950 hover:bg-purple-900 border border-purple-800/50 text-purple-300 text-[11px] rounded-lg font-medium"
+                  className="px-2 py-1 bg-purple-950 hover:bg-purple-900 border border-purple-800/50 text-purple-300 text-[11px] rounded-lg font-medium transition-colors"
                 >
                   + 手动
                 </button>
@@ -1177,15 +1216,15 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
               包含激活的顶级战法与 AI 从对话/复盘中提炼的记忆。LLM 生成报告时将最高优先级对标：
             </p>
 
-            <div className="space-y-2.5 max-h-96 overflow-y-auto pr-1">
+            <div className="space-y-2.5 flex-1 min-h-[460px] max-h-[680px] overflow-y-auto pr-1.5 custom-scrollbar">
               {memories.length === 0 ? (
-                <div className="text-center py-6 text-slate-500 text-xs">
+                <div className="text-center py-12 text-slate-500 text-xs">
                   Agent 记忆库尚空。请一键激活战法，或进行一次“召唤 Agent 交易复盘”自动积累！
                 </div>
               ) : (
                 memories.map((m) => (
                   m.memory_type === 'MASTER_PLAYBOOK' ? (
-                    <div key={m.id} className="bg-gradient-to-r from-amber-950/40 to-slate-950 border border-amber-500/50 rounded-xl p-3 space-y-1.5 relative group shadow-md shadow-amber-950/20">
+                    <div key={m.id} className="bg-gradient-to-r from-amber-950/40 to-slate-950 border border-amber-500/50 rounded-xl p-3.5 space-y-2 relative group shadow-md shadow-amber-950/20">
                       <div className="flex items-center justify-between">
                         <span className="px-2 py-0.5 text-[10px] font-extrabold rounded bg-amber-500 text-slate-950 flex items-center gap-1">
                           <Award className="w-3 h-3" />
@@ -1194,7 +1233,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
                         <button
                           onClick={() => handleDeleteMemory(m.id)}
-                          className="opacity-0 group-hover:opacity-100 text-amber-300/70 hover:text-red-400 transition-all text-xs"
+                          className="opacity-0 group-hover:opacity-100 text-amber-300/70 hover:text-red-400 transition-all text-xs p-1"
                           title="擦除此战法"
                         >
                           ✕
@@ -1209,7 +1248,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                       </div>
                     </div>
                   ) : (
-                    <div key={m.id} className="bg-slate-950 border border-slate-800/80 rounded-xl p-3 space-y-1.5 relative group">
+                    <div key={m.id} className="bg-slate-950 border border-slate-800/80 rounded-xl p-3.5 space-y-2 relative group">
                       <div className="flex items-center justify-between">
                         <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
                           m.memory_type === 'SCREENING_RULE'
@@ -1233,7 +1272,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
                         <button
                           onClick={() => handleDeleteMemory(m.id)}
-                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-all text-xs"
+                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-all text-xs p-1"
                           title="擦除此条记忆"
                         >
                           ✕
@@ -1251,10 +1290,9 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                 ))
               )}
             </div>
-
           </div>
 
-          <div className="bg-purple-950/30 border border-purple-900/40 rounded-xl p-3 text-[11px] text-purple-300">
+          <div className="mt-4 bg-purple-950/30 border border-purple-900/40 rounded-xl p-3 text-[11px] text-purple-300">
             💡 <strong>记忆进化原理</strong>：Agent 不再依赖单次对话的记忆丧失，数据库持久化积累您的操盘性格，避免“重复犯同样的错误”。
           </div>
         </div>
@@ -1381,11 +1419,25 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
       {/* Modal 1: Add Single Trade */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsAddModalOpen(false);
+          }}
+        >
+          <div
+            className="modal-animate-in surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-slate-700/60 my-auto max-h-[88vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-100">新增每日交易记录</h3>
-              <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-200">✕</button>
+              <button
+                onClick={() => setIsAddModalOpen(false)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800/50 transition-colors"
+                title="按 Esc 或点击空白处退出"
+              >
+                ✕
+              </button>
             </div>
 
             <form onSubmit={handleAddTrade} className="space-y-3">
@@ -1545,14 +1597,28 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
       {/* Modal 2: Import Clipboard Trades */}
       {isImportModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="surface-card rounded-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsImportModalOpen(false);
+          }}
+        >
+          <div
+            className="modal-animate-in surface-card rounded-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-slate-700/60 my-auto max-h-[88vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                 <Clipboard className="w-4 h-4 text-indigo-400" />
                 <span>同花顺/券商交割单粘贴解析</span>
               </h3>
-              <button onClick={() => setIsImportModalOpen(false)} className="text-slate-400 hover:text-slate-200">✕</button>
+              <button
+                onClick={() => setIsImportModalOpen(false)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800/50 transition-colors"
+                title="按 Esc 或点击空白处退出"
+              >
+                ✕
+              </button>
             </div>
 
             <textarea
@@ -1669,14 +1735,28 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
       {/* Modal 3: Add Manual Agent Memory */}
       {isMemoryModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsMemoryModalOpen(false);
+          }}
+        >
+          <div
+            className="modal-animate-in surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-slate-700/60 my-auto max-h-[88vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                 <Brain className="w-4 h-4 text-purple-400" />
                 <span>手动录入 Agent 认知记忆</span>
               </h3>
-              <button onClick={() => setIsMemoryModalOpen(false)} className="text-slate-400 hover:text-slate-200">✕</button>
+              <button
+                onClick={() => setIsMemoryModalOpen(false)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800/50 transition-colors"
+                title="按 Esc 或点击空白处退出"
+              >
+                ✕
+              </button>
             </div>
 
             <form onSubmit={handleAddMemory} className="space-y-3">
@@ -1721,14 +1801,28 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
       {/* Modal 4: Edit Trade Record */}
       {isEditReasonModalOpen && editingTrade && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsEditReasonModalOpen(false);
+          }}
+        >
+          <div
+            className="modal-animate-in surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-slate-700/60 my-auto max-h-[88vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                 <Edit3 className="w-4 h-4 text-indigo-400" />
                 <span>编辑交易记录【{editingTrade.name} ({editingTrade.symbol})】</span>
               </h3>
-              <button onClick={() => setIsEditReasonModalOpen(false)} className="text-slate-400 hover:text-slate-200">✕</button>
+              <button
+                onClick={() => setIsEditReasonModalOpen(false)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800/50 transition-colors"
+                title="按 Esc 或点击空白处退出"
+              >
+                ✕
+              </button>
             </div>
 
             <form onSubmit={handleSaveEditedReason} className="space-y-3">
@@ -1822,10 +1916,18 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
       {/* Modal 5: Agent Interactive Chat Window */}
       {isChatModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6">
-          <div className="surface-card rounded-2xl max-w-3xl w-full h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 md:p-8 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsChatModalOpen(false);
+          }}
+        >
+          <div
+            className="modal-animate-in surface-card rounded-2xl max-w-2xl w-full h-[80vh] max-h-[720px] flex flex-col shadow-2xl border border-slate-700/60 overflow-hidden my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
-            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-950/60">
+            <div className="flex items-center justify-between p-3.5 border-b border-slate-800 bg-slate-950/60">
               <div className="flex items-center space-x-3">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center shadow-md">
                   <Bot className="w-5 h-5 text-white" />
@@ -1971,14 +2073,28 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
       {/* Modal 6: AI Article Rule Extraction */}
       {isExtractModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="surface-card rounded-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-amber-500/30">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsExtractModalOpen(false);
+          }}
+        >
+          <div
+            className="modal-animate-in surface-card rounded-2xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl border border-amber-500/30 my-auto max-h-[88vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-amber-200 flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-400" />
                 <span>✨ 粘贴心得/秘籍 AI 自动萃取战法规则</span>
               </h3>
-              <button onClick={() => setIsExtractModalOpen(false)} className="text-slate-400 hover:text-slate-200">✕</button>
+              <button
+                onClick={() => setIsExtractModalOpen(false)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800/50 transition-colors"
+                title="按 Esc 或点击空白处退出"
+              >
+                ✕
+              </button>
             </div>
 
             <form onSubmit={handleExtractRulesFromArticle} className="space-y-3">

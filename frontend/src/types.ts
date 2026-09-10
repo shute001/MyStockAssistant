@@ -128,3 +128,14 @@ export interface PushConfigItem {
   auto_push_review: boolean;
 }
 
+export type ThemeId = 'indigo' | 'gold' | 'emerald' | 'cyan' | 'rose' | 'apple-silver' | 'apple-warm';
+
+export interface ThemeOption {
+  id: ThemeId;
+  name: string;
+  color: string;
+  accentClass: string;
+  badgeClass: string;
+  desc: string;
+}
+

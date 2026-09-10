@@ -7,8 +7,30 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"PingFang SC"', '"Hiragino Sans GB"', '"Microsoft YaHei"', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+        sans: [
+          '-apple-system',
+          'BlinkMacSystemFont',
+          '"Segoe UI Variable Text"',
+          '"Segoe UI Variable"',
+          '"Segoe UI"',
+          '"PingFang SC"',
+          '"Hiragino Sans GB"',
+          '"Microsoft YaHei UI"',
+          '"Microsoft YaHei"',
+          '"Source Han Sans CN"',
+          'sans-serif',
+        ],
+        mono: [
+          '"JetBrains Mono"',
+          '"Cascadia Mono"',
+          '"Cascadia Code"',
+          'Consolas',
+          'ui-monospace',
+          'SFMono-Regular',
+          'Menlo',
+          'Monaco',
+          'monospace',
+        ],
       },
       colors: {
         dark: {
