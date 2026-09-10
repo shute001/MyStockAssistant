@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Plus, Upload, Trash2, Clipboard, FileText, Check, FolderPlus, Edit3, Layers, ArrowUpDown, ArrowUp, ArrowDown, MoveRight, AlertTriangle, Archive } from 'lucide-react';
 import { PositionItem, WatchlistItem } from '../types';
+import { AccountFundBar } from './AccountFundBar';
 
 import axios from 'axios';
 
@@ -454,6 +455,8 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Account Fund Metrics Bar */}
+      <AccountFundBar onRefreshParent={onRefresh} />
 
       {/* Primary Tab Switcher & Quick Import Banner */}
       <div className="surface-card rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4">

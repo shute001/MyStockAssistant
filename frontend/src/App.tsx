@@ -1,6 +1,7 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import axios from 'axios';
 import { Header } from './components/Header';
+import { AccountFundBar } from './components/AccountFundBar';
 import { PositionItem, WatchlistItem, LLMConfigItem } from './types';
 
 const Dashboard = React.lazy(() => import('./components/Dashboard').then((module) => ({ default: module.Dashboard })));
@@ -129,12 +130,15 @@ export const App: React.FC = () => {
       {/* Main App Workspace */}
       <main className="app-content flex-1 max-w-7xl w-full mx-auto px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
         {activeTab === 'dashboard' && (
-          <Dashboard
-            positions={positions}
-            watchlists={watchlists}
-            onTriggerAI={handleTriggerAIFromDashboard}
-            onSelectStock={(symbol) => setSelectedStockSymbol(symbol)}
-          />
+          <>
+            <AccountFundBar onRefreshParent={fetchAllData} />
+            <Dashboard
+              positions={positions}
+              watchlists={watchlists}
+              onTriggerAI={handleTriggerAIFromDashboard}
+              onSelectStock={(symbol) => setSelectedStockSymbol(symbol)}
+            />
+          </>
         )}
 
         {activeTab === 'portfolio' && (

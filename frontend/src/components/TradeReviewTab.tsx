@@ -9,6 +9,7 @@ import {
   Send, Bot, User, CornerDownLeft, Award, Zap, BookOpen
 } from 'lucide-react';
 import { TradeRecordItem, AgentMemoryItem, MasterPlaybookItem } from '../types';
+import { AccountFundBar } from './AccountFundBar';
 
 interface TradeReviewTabProps {
   onSelectStock: (symbol: string) => void;
@@ -68,9 +69,13 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   const chatMessagesEndRef = useRef<HTMLDivElement>(null);
 
 
-  // Edit Strategy Reason states
+  // Edit Trade Record states
   const [editingTrade, setEditingTrade] = useState<TradeRecordItem | null>(null);
   const [editingReasonText, setEditingReasonText] = useState('');
+  const [editingTradeDate, setEditingTradeDate] = useState('');
+  const [editingTradeTime, setEditingTradeTime] = useState('');
+  const [editingPrice, setEditingPrice] = useState('');
+  const [editingVolume, setEditingVolume] = useState('');
   const [isEditReasonModalOpen, setIsEditReasonModalOpen] = useState(false);
 
 
@@ -191,7 +196,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   const handleStartScreenerAgent = async () => {
     if (isScreenerRunning || isAgentRunning) return;
     setIsScreenerRunning(true);
-    setAgentReportMd('🎯 **智能选股与策略推选 Agent 启动中**...\n正在基于您在记忆库中确立的【选股与建仓规则】，对自选股及持仓股票进行量化指标匹配与多维筛选...');
+    setAgentReportMd('');
     
     // Auto scroll down to report section smoothly
     setTimeout(() => {
@@ -398,26 +403,48 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
     setSelectedIds([]);
   };
 
-  // Open Edit Reason Modal
+  // Open Edit Record Modal
   const handleOpenEditReason = (t: TradeRecordItem) => {
     setEditingTrade(t);
     setEditingReasonText(t.strategy_reason || '');
+    setEditingPrice(t.price ? String(t.price) : '');
+    setEditingVolume(t.volume ? String(t.volume) : '');
+    
+    if (t.trade_date && t.trade_date.includes(' ')) {
+      const [d, tm] = t.trade_date.split(' ', 2);
+      setEditingTradeDate(d);
+      setEditingTradeTime(tm);
+    } else if (t.trade_date) {
+      setEditingTradeDate(t.trade_date);
+      setEditingTradeTime('09:30:00');
+    } else {
+      setEditingTradeDate('');
+      setEditingTradeTime('');
+    }
     setIsEditReasonModalOpen(true);
   };
 
-  // Save Edited Reason
+  // Save Edited Record
   const handleSaveEditedReason = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingTrade) return;
     try {
-      await axios.put(`/api/v1/trades/${editingTrade.id}/reason`, {
-        strategy_reason: editingReasonText
+      const finalDt = editingTradeDate
+        ? (editingTradeTime ? `${editingTradeDate} ${editingTradeTime}` : editingTradeDate)
+        : undefined;
+
+      await axios.put(`/api/v1/trades/${editingTrade.id}`, {
+        strategy_reason: editingReasonText,
+        trade_date: finalDt,
+        price: editingPrice ? parseFloat(editingPrice) : undefined,
+        volume: editingVolume ? parseInt(editingVolume) : undefined
       });
       setIsEditReasonModalOpen(false);
       setEditingTrade(null);
       fetchTradeData();
+      onRefreshAll();
     } catch (err) {
-      alert('修改买卖理由失败');
+      alert('修改交易记录失败');
     }
   };
 
@@ -618,6 +645,9 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
   return (
     <div className="space-y-6">
+      {/* Flush-style Account Fund Bar */}
+      <AccountFundBar onRefreshParent={onRefreshAll} />
+
       {/* Top Banner & Quick Actions */}
       <div className="surface-card bg-gradient-to-r from-slate-900 via-indigo-950/60 to-slate-900 rounded-2xl p-5 sm:p-6">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
@@ -1270,8 +1300,25 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
             </div>
 
+            {isScreenerRunning && (
+              <div className="bg-slate-950/80 border border-emerald-500/30 rounded-xl p-4 space-y-2.5 shadow-inner my-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-emerald-400 flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    AI 多线程并发分析引擎运行中
+                  </span>
+                  <span className="text-slate-400 font-mono text-[11px]">12 线程并行处理行情与 K 线指标</span>
+                </div>
+                <div className="w-full bg-slate-800/80 rounded-full h-2 overflow-hidden relative border border-slate-700/50">
+                  <div className="bg-gradient-to-r from-emerald-500 via-teal-400 to-purple-500 h-full rounded-full animate-pulse transition-all duration-500 w-full" />
+                </div>
+              </div>
+            )}
 
-          <div className="max-w-none text-sm text-slate-200 leading-relaxed">
+            <div className="max-w-none text-sm text-slate-200 leading-relaxed">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
@@ -1672,36 +1719,83 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
         </div>
       )}
 
-      {/* Modal 4: Edit Strategy Reason */}
+      {/* Modal 4: Edit Trade Record */}
       {isEditReasonModalOpen && editingTrade && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="surface-card rounded-2xl max-w-md w-full p-5 sm:p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                 <Edit3 className="w-4 h-4 text-indigo-400" />
-                <span>编辑【{editingTrade.name} ({editingTrade.symbol})】买卖理由</span>
+                <span>编辑交易记录【{editingTrade.name} ({editingTrade.symbol})】</span>
               </h3>
               <button onClick={() => setIsEditReasonModalOpen(false)} className="text-slate-400 hover:text-slate-200">✕</button>
             </div>
 
             <form onSubmit={handleSaveEditedReason} className="space-y-3">
-              <div className="text-xs text-slate-400 bg-slate-950 p-2.5 rounded-xl border border-slate-800 space-y-1">
+              <div className="text-xs text-slate-400 bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between">
                 <div>
-                  交易方向：<strong className={editingTrade.trade_type === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}>{editingTrade.trade_type === 'BUY' ? '买入' : '卖出'}</strong> &nbsp;|&nbsp; 
-                  成交单价：¥{editingTrade.price}
+                  交易方向：<strong className={editingTrade.trade_type === 'BUY' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{editingTrade.trade_type === 'BUY' ? '买入 (BUY)' : '卖出 (SELL)'}</strong>
                 </div>
-                <div>成交时间：{editingTrade.trade_date}</div>
+                <div className="font-mono text-slate-300">
+                  代码: {editingTrade.symbol}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">成交价格 (元)</label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={editingPrice}
+                    onChange={(e) => setEditingPrice(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">成交数量 (股)</label>
+                  <input
+                    type="number"
+                    value={editingVolume}
+                    onChange={(e) => setEditingVolume(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">成交日期</label>
+                  <input
+                    type="date"
+                    value={editingTradeDate}
+                    onChange={(e) => setEditingTradeDate(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 cursor-pointer font-mono"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">成交时间</label>
+                  <input
+                    type="time"
+                    step="1"
+                    value={editingTradeTime}
+                    onChange={(e) => setEditingTradeTime(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 cursor-pointer font-mono"
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs text-slate-400 mb-1">买卖理由与复盘心得 (重要: 供 Agent 复盘分析)</label>
                 <textarea
-                  rows={4}
+                  rows={3}
                   placeholder="例如: 突破20日线放量确认建仓，或触及止损线纪律平仓..."
                   value={editingReasonText}
                   onChange={(e) => setEditingReasonText(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-sans"
-                  required
                 />
               </div>
 

@@ -101,9 +101,10 @@ class MultiLLMEngine:
         current_positions: List[Dict[str, Any]],
         macro_context: Optional[Dict[str, Any]] = None,
         traded_stocks_indicators: Optional[Dict[str, Any]] = None,
-        summary_info: Optional[Dict[str, Any]] = None
+        summary_info: Optional[Dict[str, Any]] = None,
+        account_fund_info: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Construct Trade Review Agent prompt with memory injection, dataset summary, per-trade indicators, 4D scoring & weekly leak detection"""
+        """Construct Trade Review Agent prompt with memory injection, dataset summary, account capital, per-trade indicators, 4D scoring & weekly leak detection"""
         memory_block = AgentMemoryService.format_memories_for_prompt(db)
         macro_block = MarketDataService.format_macro_prompt_block(macro_context) if macro_context else ""
         
@@ -111,6 +112,14 @@ class MultiLLMEngine:
         if summary_info:
             summary_block = f"""## 📊 用户全量历史交易账本宏观统计 (完整 3 年时间跨度、全量胜率、盈亏比与 FIFO 累计盈亏):
 {json.dumps(summary_info, ensure_ascii=False, indent=2)}
+"""
+
+        capital_block = ""
+        if account_fund_info:
+            capital_block = f"""## 💰 用户当前账户资金与仓位概览 (同花顺 9 项资金指标):
+- **总资产**: ¥{account_fund_info.get('total_assets', 0):,.2f} 元  |  **可用资金**: ¥{account_fund_info.get('available_cash', 0):,.2f} 元  |  **股票市值**: ¥{account_fund_info.get('market_value', 0):,.2f} 元
+- **仓位比例**: {account_fund_info.get('position_ratio', '0.00%')}  |  **持仓盈亏**: ¥{account_fund_info.get('holding_pnl', 0):,.2f} 元  |  **当日盈亏**: ¥{account_fund_info.get('daily_pnl', 0):,.2f} 元 ({account_fund_info.get('daily_pnl_pct', '0.00%')})
+- **资金余额**: ¥{account_fund_info.get('cash_balance', 0):,.2f} 元  |  **可取金额**: ¥{account_fund_info.get('withdrawable_cash', 0):,.2f} 元  |  **冻结金额**: ¥{account_fund_info.get('frozen_amount', 0):,.2f} 元
 """
 
         indicators_block = ""
@@ -124,11 +133,15 @@ class MultiLLMEngine:
         prompt = f"""# 🤖 Trade Review Agent (AI 交易复盘与诊所教练) 指令
 
 你是一位经验丰富、注重风险控制与交易心理的 A 股量化交易复盘教练。
-你的职责是：深入分析用户的交易记录、持仓以及确定性全量统计数据（胜率、盈亏比、期望收益、全量交易笔数），**对照当日/当前全市场大盘情绪、领涨热点板块、实时新闻背景以及个股真实 K 线均线指标（MA5/10/20、MACD、KDJ、支撑压力位）**，识别交易性格、优点与致命缺点，输出【四维能力评分卡】与【周度纪律漏洞诊断】，给出犀利且可执行的改进指导，并在报告结尾自动萃取【记忆演化总结】。
+你的职责是：深入分析用户的交易记录、持仓以及确定性全量统计数据（胜率、盈亏比、期望收益、全量交易笔数），**结合用户账户资金总额 (¥{account_fund_info.get('total_assets', 0) if account_fund_info else '未知'}) 与当前仓位比例 ({account_fund_info.get('position_ratio', '未知') if account_fund_info else '未知'})，对照当日/当前全市场大盘情绪、领涨热点板块、实时新闻背景以及个股真实 K 线均线指标（MA5/10/20、MACD、KDJ、支撑压力位）**，识别交易性格、优点与致命缺点，输出【四维能力评分卡】与【周度纪律漏洞诊断】，给出犀利且可执行的改进指导，并在报告结尾自动萃取【记忆演化总结】。
 
 【重要须知】：你已获得用户全量 {summary_info.get('total_trades_count', len(trade_records)) if summary_info else len(trade_records)} 笔交易的历史账本宏观统计（胜率、盈亏比、期望收益、全量盈亏），下方明细展示了最近 {len(trade_records)} 笔交易的详细日志。在诊断时请基于全量账本宏观指标进行全面定性分析。
 
 {macro_block}
+
+---
+
+{capital_block}
 
 ---
 
@@ -227,17 +240,31 @@ class MultiLLMEngine:
         cls, 
         watchlist_items: List[Dict[str, Any]], 
         user_rules_text: str, 
-        macro_context: Optional[Dict[str, Any]] = None
+        macro_context: Optional[Dict[str, Any]] = None,
+        account_fund_info: Optional[Dict[str, Any]] = None
     ) -> str:
         """Construct Stock & ETF Screener prompt based on market macro, user rules & technical signals"""
         macro_block = MarketDataService.format_macro_prompt_block(macro_context) if macro_context else ""
+
+        capital_block = ""
+        if account_fund_info:
+            capital_block = f"""## 💰 用户账户真实资金与可用流动性 (用于精确指导买入金额与建仓股数):
+- **总资产**: ¥{account_fund_info.get('total_assets', 0):,.2f} 元  |  **可用资金**: ¥{account_fund_info.get('available_cash', 0):,.2f} 元
+- **当前仓位比例**: {account_fund_info.get('position_ratio', '0.00%')}  |  **股票市值**: ¥{account_fund_info.get('market_value', 0):,.2f} 元
+"""
 
         prompt = f"""# 🤖 Stock & ETF Screener Agent (AI 智能选股与预警) 指令
 
 你是一位严苛的 A 股量化选股策略专家。
 请结合全市场大盘情绪、主力热点板块、最新宏观消息，以及用户激活的顶级战法与选股铁律，进行多维度智能推选。
 
+【重要资金指导规则】：你在给出推荐建仓标的时，请严格结合上方【用户账户真实资金与可用流动性 (可用金额 ¥{account_fund_info.get('available_cash', 0) if account_fund_info else '未知'})】，在“建仓买点与严格风控纪律”部分**给出具体的建议建仓金额 (元) 和按当前股价计算的建议买入股数**，帮助用户科学控制风控仓位！
+
 {macro_block}
+
+---
+
+{capital_block}
 
 ---
 
@@ -261,7 +288,7 @@ class MultiLLMEngine:
 - **板块与消息面催化**: 说明该标的是否具备大盘风向与板块热度支撑。
 
 ### 🛡️ 3. 建仓买点与严格风控纪律
-- 给出建议的建仓区间、止损价位与首期仓位占比。
+- 结合可用资金 (¥{account_fund_info.get('available_cash', 0) if account_fund_info else '未知'}) 给出具体的【建仓价格区间】、【建议投入金额 (元) 与建议买入股数】、【绝对止损价位】与【首期仓位占比】。
 """
         return prompt
 

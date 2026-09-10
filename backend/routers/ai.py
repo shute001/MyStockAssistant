@@ -275,6 +275,10 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
     # 1. Fetch user full trade dataset summary + expanded recent trade history (up to 150 trades)
     summary_info, trade_payload, _ = get_trade_context_for_agent(db, limit_recent=150)
 
+    # 1.5. Fetch user account fund & capital allocation metrics
+    from routers.account import get_account_fund_summary
+    account_fund_info = get_account_fund_summary(db)
+
     # 2. Fetch user current positions with real-time quotes & market data
     positions = db.query(Position).all()
     pos_symbols = [p.symbol for p in positions]
@@ -331,6 +335,18 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
     # 5. Fetch agent active memories (Master Playbooks & Lessons)
     memories_prompt = AgentMemoryService.format_memories_for_prompt(db)
 
+    account_capital_prompt = f"""
+【💰 用户账户总资金与资金流动性概览 (同花顺 9 项资金指标)】
+- 💰 总资产: ¥{account_fund_info['total_assets']:,.2f} 元
+- 💵 可用资金: ¥{account_fund_info['available_cash']:,.2f} 元 (资金余额: ¥{account_fund_info['cash_balance']:,.2f} 元, 可取: ¥{account_fund_info['withdrawable_cash']:,.2f} 元)
+- 📈 股票市值: ¥{account_fund_info['market_value']:,.2f} 元
+- 📊 当前仓位比例: {account_fund_info['position_ratio']} (持仓盈亏: ¥{account_fund_info['holding_pnl']:,.2f} 元, 当日盈亏: ¥{account_fund_info['daily_pnl']:,.2f} 元 [{account_fund_info['daily_pnl_pct']}])
+- 🔒 冻结资金: ¥{account_fund_info['frozen_amount']:,.2f} 元
+
+【💡 资金与仓位决策指导规则】：
+在为用户提供加仓/建仓/减仓或资产配置建议时，你必须**严格结合用户上述真实的可用资金 (¥{account_fund_info['available_cash']:,.2f}) 与当前仓位比例 ({account_fund_info['position_ratio']})** 进行精细化仓位计算！例如：若建议建仓某只股票，请给出具体的【建议投入金额 (元)】与【建议买入股数】，并提醒用户保持合理的现金防御比例！
+"""
+
     system_prompt = f"""你是一位专业的 A 股交易教练 AI Agent，具备深厚的量化操盘、实时行情研判、行为金融学与心态管理经验。
 
 【⚠️ 最高权威指令 - 你的核心能力与数据全貌认知】
@@ -349,6 +365,7 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 “好的！我已将本次的操盘分析与策略总结实时发送至您的微信，请在手机微信中查收！”，并在回答第一行包含标识 `[WECHAT_PUSH_REQUESTED]`，随后随附整理好的【微信精简版复盘/策略卡片】。
 
 {macro_block}
+{account_capital_prompt}
 {queried_stock_block}
 
 【用户当前持仓 (包含实时报价与盈亏状态)】
@@ -359,7 +376,7 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 
 {memories_prompt}
 
-请基于上述大盘宏观热点、实时行情与 K 线指标、全量交割单账本、持仓与认知战法，以专业、沉稳、建设性的语气同用户进行对话。如果用户询问某只股票或具体盘口，请直接引用提供的最新行情指标与大盘热点给出犀利而精准的解答！
+请基于上述大盘宏观热点、实时行情与 K 线指标、全量交割单账本、账户资金全貌、持仓与认知战法，以专业、沉稳、建设性的语气同用户进行对话。如果用户询问某只股票或具体盘口，请直接引用提供的最新行情指标与大盘热点给出犀利而精准的解答！
 """
 
     messages_payload = [{"role": msg.role, "content": msg.content} for msg in payload.messages]
@@ -421,13 +438,17 @@ async def review_trades_agent_stream(db: Session = Depends(get_db)):
         })
 
     macro_context = MarketDataService.get_market_macro_context()
+    from routers.account import get_account_fund_summary
+    account_fund_info = get_account_fund_summary(db)
+
     prompt = MultiLLMEngine.build_trade_review_prompt(
         db, 
         trade_payload, 
         pos_payload, 
         macro_context=macro_context,
         traded_stocks_indicators=traded_stocks_indicators,
-        summary_info=summary_info
+        summary_info=summary_info,
+        account_fund_info=account_fund_info
     )
 
     async def event_generator():
@@ -585,11 +606,60 @@ async def extract_rules_from_text(payload: ExtractRulesRequest, db: Session = De
         "saved_memories": saved_mems
     }
 
+def auto_sync_screener_recommendations_to_watchlist(db: Session, report_text: str, candidate_items: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """
+    Automatically parse recommended stocks from Screener AI report and sync into Watchlist under '🤖 AI 精选建仓' category
+    """
+    category_name = "🤖 AI 精选建仓"
+    
+    # Extract Section 1 (精选标的推荐)
+    target_section = report_text
+    if "1. 顶尖战法" in report_text:
+        parts = report_text.split("1. 顶尖战法", 1)
+        if len(parts) > 1:
+            target_section = parts[1].split("2. 战法契合度", 1)[0]
+
+    added_items = []
+    
+    for item in candidate_items:
+        sym = item.get("symbol")
+        name = item.get("name")
+        if not sym:
+            continue
+            
+        symbol_matched = bool(sym and sym in target_section)
+        name_matched = bool(name and len(name) >= 2 and name in target_section)
+
+        if symbol_matched or name_matched:
+            w = db.query(Watchlist).filter(Watchlist.symbol == sym).first()
+            if w:
+                w.category = category_name
+                w.remark = f"AI智能选股推选建仓标的 ({bj_now().strftime('%m-%d %H:%M')})"
+            else:
+                w = Watchlist(
+                    symbol=sym,
+                    category=category_name,
+                    remark=f"AI智能选股推选建仓标的 ({bj_now().strftime('%m-%d %H:%M')})"
+                )
+                db.add(w)
+            
+            added_items.append({"symbol": sym, "name": name or sym})
+
+    if added_items:
+        db.commit()
+
+    return added_items
+
+
 @router.post("/screener/run-stream")
 async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
-    """Stream Stock & ETF Screener Agent recommendation report based on Watchlist & User Rules"""
+    """Stream Stock & ETF Screener Agent recommendation report with parallel indicators fetching & real-time progress updates"""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
     watchlists = db.query(Watchlist).all()
     positions = db.query(Position).all()
+    all_stocks = {s.symbol: s.name for s in db.query(Stock).all()}
 
     symbols_map = {}
     for w in watchlists:
@@ -598,19 +668,53 @@ async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
         if p.symbol not in symbols_map:
             symbols_map[p.symbol] = "持仓股"
 
-    watchlist_items = []
-    for sym, cat in symbols_map.items():
-        stock = db.query(Stock).filter(Stock.symbol == sym).first()
-        name = stock.name if stock else sym
-        indicators = MarketDataService.get_stock_indicators_summary(sym, name)
-        indicators["category"] = cat
-        watchlist_items.append(indicators)
-
+    total_candidates = len(symbols_map)
     user_rules_text = AgentMemoryService.format_memories_for_prompt(db)
     macro_context = MarketDataService.get_market_macro_context()
-    prompt = MultiLLMEngine.build_stock_screener_prompt(watchlist_items, user_rules_text, macro_context=macro_context)
 
     async def event_generator():
+        # 1. Yield clean initial status banner to frontend
+        yield f"> 📡 **智能选股 Agent 已启动**：正在利用 12 线程并发引擎扫描全量 **{total_candidates}** 只候选标的（自选/持仓）的实时行情、MA 均线、MACD 与 30 日支撑/压力位...\n\n"
+
+        if total_candidates == 0:
+            yield "⚠️ **选股提示**: 当前自选股与持仓列表中暂无标的。请先在【自选股/板块】中添加关注标的，智能选股 Agent 才能为您匹配战法推选！"
+            return
+
+        # 2. Pre-fetch batch quotes in 1 single HTTP request (~50ms)
+        all_syms = list(symbols_map.keys())
+        MarketDataService.get_batch_realtime_quotes(all_syms)
+
+        # 3. Parallel fetch stock indicators using ThreadPoolExecutor
+        loop = asyncio.get_running_loop()
+        watchlist_items = []
+
+        def fetch_single(sym: str, cat: str):
+            name = all_stocks.get(sym) or MarketDataService.get_stock_name(sym)
+            ind = MarketDataService.get_stock_indicators_summary(sym, name)
+            ind["category"] = cat
+            return ind
+
+        with ThreadPoolExecutor(max_workers=min(12, max(1, total_candidates))) as executor:
+            tasks = [
+                loop.run_in_executor(executor, fetch_single, sym, cat)
+                for sym, cat in symbols_map.items()
+            ]
+            # Gather all completed indicators without polluting markdown text
+            watchlist_items = await asyncio.gather(*tasks)
+
+        yield f"> 🧠 **行情研判全量就绪**！正在对标【顶级战法库】与【全场大盘/热点风向】精选优质建仓标的...\n\n---\n\n"
+
+        from routers.account import get_account_fund_summary
+        account_fund_info = get_account_fund_summary(db)
+
+        # 4. Construct prompt and stream LLM response
+        prompt = MultiLLMEngine.build_stock_screener_prompt(
+            watchlist_items, 
+            user_rules_text, 
+            macro_context=macro_context,
+            account_fund_info=account_fund_info
+        )
+
         report_text = ""
         async for chunk in MultiLLMEngine.generate_analysis_stream(
             db, 
@@ -621,6 +725,15 @@ async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
                 report_text += chunk
                 yield chunk
 
+        # Auto sync recommended stocks into Watchlist under category "🤖 AI 精选建仓"
+        synced_stocks = auto_sync_screener_recommendations_to_watchlist(db, report_text, watchlist_items)
+        if synced_stocks:
+            stock_names_str = "、".join([f"**{s['name']} ({s['symbol']})**" for s in synced_stocks])
+            sync_notice = f"\n\n---\n\n> ✨ **自选板块自动打标与同步通知**：系统已自动将 AI 匹配精选的建仓标的 {stock_names_str} 添加/同步至自选板块【**🤖 AI 精选建仓**】中！您可随时在“持仓与自选管理”板块中集中监控其最新走势与买点！\n"
+            report_text += sync_notice
+            yield sync_notice
+
+        # Auto save completed report to DB
         active_cfg = MultiLLMEngine.get_active_config(db)
         report = AnalysisReport(
             report_type="STOCK_SCREENER_AGENT",

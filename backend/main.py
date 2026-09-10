@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db, SessionLocal, Stock, Position, Watchlist, LLMConfig, TradeRecord, AgentMemory, bj_now
 from config import settings
-from routers import stocks, importer, ai, config, trades
+from routers import stocks, importer, ai, config, trades, account
 from services.scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -31,6 +31,7 @@ app.include_router(importer.router, prefix=settings.API_V1_STR)
 app.include_router(ai.router, prefix=settings.API_V1_STR)
 app.include_router(config.router, prefix=settings.API_V1_STR)
 app.include_router(trades.router, prefix=settings.API_V1_STR)
+app.include_router(account.router, prefix=settings.API_V1_STR)
 
 def seed_demo_data():
     """Seed initial sample stocks, trade records, and LLM provider for zero-config quickstart"""

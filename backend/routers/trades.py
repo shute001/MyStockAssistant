@@ -49,8 +49,13 @@ class TradeBatchPayload(BaseModel):
 class BatchDeletePayload(BaseModel):
     ids: List[int]
 
-class UpdateReasonPayload(BaseModel):
-    strategy_reason: str
+class TradeUpdatePayload(BaseModel):
+    strategy_reason: Optional[str] = None
+    trade_date: Optional[str] = None
+    price: Optional[float] = None
+    volume: Optional[int] = None
+    is_planned: Optional[bool] = None
+    trade_tag: Optional[str] = None
 
 class ClipboardParsePayload(BaseModel):
     text: str
@@ -529,16 +534,43 @@ def clear_all_trades(db: Session = Depends(get_db)):
     return {"status": "success", "deleted_count": count}
 
 
+@router.put("/{trade_id}")
 @router.put("/{trade_id}/reason")
-def update_trade_reason(trade_id: int, payload: UpdateReasonPayload, db: Session = Depends(get_db)):
-    """Update strategy reason / reflection note for a trade record"""
+def update_trade_record(trade_id: int, payload: TradeUpdatePayload, db: Session = Depends(get_db)):
+    """Update trade record fields including strategy reason, trade date/time, price, volume, and tags"""
     trade = db.query(TradeRecord).filter(TradeRecord.id == trade_id).first()
     if not trade:
         raise HTTPException(status_code=404, detail="Trade record not found")
 
-    trade.strategy_reason = payload.strategy_reason.strip()
+    if payload.strategy_reason is not None:
+        trade.strategy_reason = payload.strategy_reason.strip()
+
+    if payload.trade_date is not None and payload.trade_date.strip():
+        t_date = parse_datetime_flexible(payload.trade_date)
+        trade.trade_date = t_date
+
+    if payload.price is not None:
+        trade.price = payload.price
+        trade.amount = round(payload.price * (trade.volume or 0), 2)
+
+    if payload.volume is not None:
+        trade.volume = payload.volume
+        trade.amount = round((trade.price or 0.0) * payload.volume, 2)
+
+    if payload.is_planned is not None:
+        trade.is_planned = payload.is_planned
+
+    if payload.trade_tag is not None:
+        trade.trade_tag = payload.trade_tag
+
     db.commit()
-    return {"status": "success", "trade_id": trade_id, "strategy_reason": trade.strategy_reason}
+    db.refresh(trade)
+    return {
+        "status": "success",
+        "trade_id": trade_id,
+        "strategy_reason": trade.strategy_reason,
+        "trade_date": trade.trade_date.strftime("%Y-%m-%d %H:%M:%S") if trade.trade_date else ""
+    }
 
 @router.delete("/{trade_id}")
 def delete_trade_record(trade_id: int, db: Session = Depends(get_db)):

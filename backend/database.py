@@ -122,6 +122,17 @@ class PushConfig(Base):
     auto_push_review = Column(Boolean, default=False)
     updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
 
+class AccountFund(Base):
+    __tablename__ = "account_funds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    total_assets = Column(Float, default=195305.74)      # 总资产 (元)
+    available_cash = Column(Float, default=67316.68)     # 可用金额 (元)
+    cash_balance = Column(Float, default=314.13)         # 资金余额 (元)
+    withdrawable_cash = Column(Float, default=314.13)    # 可取金额 (元)
+    frozen_amount = Column(Float, default=-67002.55)     # 冻结金额 (元)
+    updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
+
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -140,5 +151,22 @@ def init_db():
             conn.commit()
     except Exception:
         pass
+    # account_funds backward compatibility (in case older DB lacks columns)
+    _account_funds_migrations = [
+        "ALTER TABLE account_funds ADD COLUMN total_assets REAL DEFAULT 0.0;",
+        "ALTER TABLE account_funds ADD COLUMN available_cash REAL DEFAULT 0.0;",
+        "ALTER TABLE account_funds ADD COLUMN cash_balance REAL DEFAULT 0.0;",
+        "ALTER TABLE account_funds ADD COLUMN withdrawable_cash REAL DEFAULT 0.0;",
+        "ALTER TABLE account_funds ADD COLUMN frozen_amount REAL DEFAULT 0.0;",
+        "ALTER TABLE account_funds ADD COLUMN updated_at DATETIME;",
+    ]
+    from sqlalchemy import text
+    for _sql in _account_funds_migrations:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(_sql))
+                conn.commit()
+        except Exception:
+            pass
 
 
