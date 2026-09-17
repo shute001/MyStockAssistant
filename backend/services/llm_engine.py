@@ -228,7 +228,7 @@ class MultiLLMEngine:
 - **持仓与自选整体诊断**: 汇总评估当前组合结构（高股息、科技成长、周期等）的合理性。
 
 ### 🛡️ 2. 重点标的逐一AI深度诊断
-- 针对用户持仓与自选股中的核心标的，逐一分析其技术面、均线形态、MACD/KDJ状态，并给出明确的持仓/减仓/止损/加仓策略建议。
+- 针对用户持仓与自选股中的核心标的，逐一结合其【近 10 日 K 线形态走势序列】、【当日成交量量比】、【MA5~250 均线与年线位置】、【MACD/KDJ/RSI/BOLL 全维指标】，剖析多空动能演变，并给出明确的持仓/减仓/止损/加仓策略建议与精准防守价格。
 
 ### ⚠️ 3. 风险警示与操盘纪律提醒
 - 给出 2-3 条当前市场环境下的仓位控制与操盘风控铁律。
@@ -273,7 +273,7 @@ class MultiLLMEngine:
 
 ---
 
-## 📌 候选标的池行情与指标数据：
+## 📌 候选标的池全维量化行情与指标数据 (包含 1年宏观分位、近10日K线序列、量比与摆动指标)：
 {json.dumps(watchlist_items, ensure_ascii=False, indent=2)}
 
 ---
@@ -281,14 +281,16 @@ class MultiLLMEngine:
 ## 请按以下 Markdown 结构生成【Stock & ETF Screener 选股与建仓报告】：
 
 ### 🏆 1. 顶尖战法高匹配度精选标的推荐
-- 从候选池中严苛筛选出 1-3 只最高度匹配【顶级战法与风控铁律】的重点标的。标注其对标的战法名称（如：CANSLIM突破、龙头分歧低吸）。
+- 从候选池中严苛筛选出 1-3 只最高度匹配【顶级战法与风控铁律】的重点标的。标注其对标的战法名称（如：主线龙头分歧低吸、龙回头二波爆发、红利防御低吸等）。
 
-### 🔍 2. 战法契合度与深度指标验证
-- **战法规则匹配点**: 阐述该标的具体满足了哪几条顶级战法规则（如：均线 MA5/10/20 多头、放量突破、MACD 零轴上方金叉）。
-- **板块与消息面催化**: 说明该标的是否具备大盘风向与板块热度支撑。
+### 🔍 2. 深度 K 线量价格局与技术指标共振验证
+- **近 10 日 K 线量价格局逐日复盘**: 详细引用该标的近 10 日 K 线序列中的具体日期与走势特征（如：是否出现连阳蓄势、放量阳线反包、中阴线缩量洗盘、探底长下影针）。
+- **量价配合与量比验证**: 详细核验当前成交量与量比（如放量 >1.5x 还是缩量 <0.7x），论证是健康的放量突破还是缩量回踩，杜绝高位放量滞涨与无量阴跌。
+- **均线与摆动指标共振**: 验证 MA5/10/20 排列、半年线/年线位置（MA120/MA250）、MACD零轴状态（红绿柱放大或金叉）、KDJ与RSI（40-70强势区还是超跌反弹）、BOLL布林带轨道位置。
+- **1年大周期安全边际**: 结合 1 年价格分位数（如位于历史低位 20% 安全边际）与板块主线消息催化。
 
-### 🛡️ 3. 建仓买点与严格风控纪律
-- 结合可用资金 (¥{account_fund_info.get('available_cash', 0) if account_fund_info else '未知'}) 给出具体的【建仓价格区间】、【建议投入金额 (元) 与建议买入股数】、【绝对止损价位】与【首期仓位占比】。
+### 🛡️ 3. 精准建仓买点与严格风控纪律
+- 结合可用资金 (¥{account_fund_info.get('available_cash', 0) if account_fund_info else '未知'})，给出具体的【建仓价格区间】、【建议投入金额 (元) 与建议买入股数】、【绝对止损价位 (如跌破关键K线低点或MA20 3%)】与【首期仓位占比】。
 """
         return prompt
 
@@ -348,6 +350,216 @@ class MultiLLMEngine:
 
         return extracted
 
+    @classmethod
+    async def audit_and_optimize_memories(cls, db: Session, memories: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Audit, prune, merge and optimize all agent memories into a streamlined, high-signal trading rulebook.
+        """
+        if not memories:
+            return {
+                "summary": "当前经验库为空，无需优化瘦身。",
+                "prune_items": [],
+                "merged_items": [],
+                "keep_items": []
+            }
+
+        config = cls.get_active_config(db)
+        api_key = config["api_key"]
+        base_url = config["base_url"].rstrip("/")
+        model = config["model"]
+
+        mems_json_str = json.dumps([
+            {
+                "id": m["id"],
+                "type": m.get("memory_type", "USER_HABIT"),
+                "content": m.get("content", ""),
+                "importance": m.get("importance", 3),
+                "source": m.get("source_info", "")
+            }
+            for m in memories
+        ], ensure_ascii=False, indent=2)
+
+        prompt = f"""你是一位资深的 A 股量化交易体系架构师与实盘教练。
+当前用户的 AI 交易教练经验库中积累了以下 {len(memories)} 条规则条目：
+
+```json
+{mems_json_str}
+```
+
+请对这些条目进行全方位【深度审计、去粗取精、现有规则升级优化、以及全网热门有效战法补充】：
+【优化目标与评估维度】
+1. 坚决清理淘汰 (放入 prune_items):
+   - 缺乏量化依据的情绪化空话、套话、废话（例如“心态要好”、“冲动是魔鬼”、“大盘不好注意风险”等无具体指标或买卖条件的口头禅）。
+   - 与已有成熟战法完全重复的冗余条目。
+   - 过短（<10字）或缺乏完整交易逻辑的模糊语句。
+   - 必须给出具体的淘汰理由 reason。
+2. 现有经验深度优化升级 (放入 enhanced_items):
+   - 对于方向正确但表述模糊、缺乏具体量化参数（如未写明均线参数、成交量倍数、具体止损百分比）的已有规则，将其重构升级为严谨规范的实战战法（格式统为【顶级战法: 战法名】1.买入条件... 2.风控止损...）。
+   - 包含 id, original_content, enhanced_content, improvement_reason。
+3. 全网热门与高胜率战法补充推荐 (放入 recommended_items):
+   - 结合 A 股全网公认、经过多年实战检验的热门顶级战法（如：游资龙头分歧低吸、龙回头量价异动、竞价弱转强、均线多头回踩、高股息防御），针对当前经验库缺失的盲区，推荐 1~3 条可立即补充的高价值战法。
+   - 包含 name, content (规范战法文本), source_info (全网热门战法/游资经典模式), rationale (推荐理由与补全盲区说明)。
+4. 合并提炼 (放入 merged_items):
+   - 将零散分散的多条碎片心得合并为一条完整战法。
+   - 包含 original_ids, new_content, memory_type (MASTER_PLAYBOOK), importance (5), reason。
+5. 核心保留 (放入 keep_items):
+   - 本身就具备清晰量化指标和严密买卖/止损标准的合格战法。
+   - 包含 id, content, memory_type, importance, reason。
+
+【输出格式要求】
+必须直接返回标准 JSON 对象，严禁包裹任何 ``` 标记，格式如下：
+{{
+  "summary": "本次审计共评估 N 条规则，建议淘汰 X 条噪音，优化升级 A 条已有经验，推荐补充 B 条全网热门有效战法，合并提纯 Y 条战法，保留 Z 条核心实战规则。",
+  "prune_items": [
+    {{
+      "id": 12,
+      "content": "规则原文字符串",
+      "reason": "淘汰原因"
+    }}
+  ],
+  "enhanced_items": [
+    {{
+      "id": 14,
+      "original_content": "原规则文本",
+      "enhanced_content": "【顶级战法: 战法名】1. 买入条件: ... 2. 止损纪律: ...",
+      "improvement_reason": "补齐量化均线阈值与严格止损位"
+    }}
+  ],
+  "recommended_items": [
+    {{
+      "name": "🔥 游资龙头分歧低吸战法",
+      "content": "【顶级战法: 主线龙头分歧低吸战法】1. 选股锁定两市成交额前三的主线核心龙头；2. 绝不在连板加速日追高，仅在首个分歧日缩量回踩5日/10日均线企稳时低吸；3. 跌破10日均线次日无法反包无条件止损。",
+      "source_info": "全网热门游资模式",
+      "rationale": "补齐当前经验库缺乏主线龙头短线捕捉工具的盲区"
+    }}
+  ],
+  "merged_items": [
+    {{
+      "original_ids": [15, 18],
+      "new_content": "【顶级战法: 战法名】1. 买入条件... 2. 止损纪律...",
+      "memory_type": "MASTER_PLAYBOOK",
+      "importance": 5,
+      "reason": "合并提炼原因"
+    }}
+  ],
+  "keep_items": [
+    {{
+      "id": 1,
+      "content": "规则原文字符串",
+      "memory_type": "MASTER_PLAYBOOK",
+      "importance": 5,
+      "reason": "保留理由"
+    }}
+  ]
+}}
+"""
+        if api_key:
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "你是一位专业的量化交易体系架构师，擅长将零散交易心得进行知识蒸馏与严密规则化，并精通A股全网热门顶尖实战战法。"},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.2
+            }
+            try:
+                async with httpx.AsyncClient(timeout=45.0) as client:
+                    resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                    if resp.status_code == 200:
+                        res_json = resp.json()
+                        raw = res_json["choices"][0]["message"]["content"].strip()
+                        if raw.startswith("```"):
+                            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, dict) and ("prune_items" in parsed or "keep_items" in parsed):
+                            parsed.setdefault("enhanced_items", [])
+                            parsed.setdefault("recommended_items", [])
+                            return parsed
+            except Exception as e:
+                logger.error(f"LLM audit memories error: {e}")
+
+        # Intelligent Heuristic Fallback
+        prune_items = []
+        keep_items = []
+        enhanced_items = []
+        merged_items = []
+
+        seen_texts = set()
+        vague_kws = ["心态", "情绪", "后悔", "盲目", "别冲动", "加油", "痛苦", "难受", "小心点", "注意心态", "运气", "放平心态"]
+        quant_kws = ["%", "均线", "突破", "支撑", "止损", "MA", "MACD", "KDJ", "ROE", "放量", "连板", "分歧", "龙头", "低吸", "股息"]
+
+        for m in memories:
+            cid = m["id"]
+            text = m.get("content", "").strip()
+            if text in seen_texts:
+                prune_items.append({
+                    "id": cid,
+                    "content": text,
+                    "reason": "与已有记录完全重复，属于多余冗余条目"
+                })
+                continue
+            seen_texts.add(text)
+
+            is_vague = any(k in text for k in vague_kws) and not any(k in text for k in quant_kws)
+            is_too_short = len(text) < 14 and not any(k in text for k in quant_kws)
+
+            if is_vague or is_too_short:
+                prune_items.append({
+                    "id": cid,
+                    "content": text,
+                    "reason": "缺乏具体量化买卖条件与指标阈值，属于情绪化口号或表述过短"
+                })
+            elif len(text) < 35 and not text.startswith("【顶级战法") and len(enhanced_items) < 2:
+                enhanced_items.append({
+                    "id": cid,
+                    "original_content": text,
+                    "enhanced_content": f"【顶级战法: 规范量化升级】1. 实战触发条件: {text}；2. 确认信号: 需配合日K线MA5/MA10均线支撑及成交量配合；3. 风控止损: 跌破关键支撑位且3日内未收复坚决无条件止损。",
+                    "improvement_reason": "原经验表述较简略，已补充均线支撑确认条件与破位3日止损硬纪律"
+                })
+            else:
+                keep_items.append({
+                    "id": cid,
+                    "content": text,
+                    "memory_type": m.get("memory_type", "MASTER_PLAYBOOK"),
+                    "importance": m.get("importance", 5),
+                    "reason": "具备明确量化买卖/选股条件与风控纪律，属于核心实战规则"
+                })
+
+        # Preset popular market playbooks recommendation
+        recommended_items = [
+            {
+                "name": "🔥 游资主线龙头分歧低吸战法 (股票短线)",
+                "category": "SHORT_TERM",
+                "content": "【顶级战法: 主线龙头分歧低吸战法】1. 选股锁定全市场当期成交量前两名的核心主线题材；2. 绝不在加速连板日追高，仅在主线分歧缩量回踩 5日/10日均线确认支撑时低吸；3. 坚决不上车无题材支撑的后排跟风个股。",
+                "source_info": "全网热门游资模式",
+                "rationale": "完善股票短线进攻体系，避免追高被套，专抓主线龙头分歧低吸黄金点"
+            },
+            {
+                "name": "🌐 宽基/行业 ETF 均线动态网格战法 (ETF/基金)",
+                "category": "ETF_FUND",
+                "content": "【顶级战法: 宽基/行业 ETF 动态网格战法】1. 标的选择：首选沪深300、科创50、中证A500、恒生科技等高流动性核心宽基或高成长行业ETF；2. 网格构建：以 MA20 为中轴，每下跌 3%~5% 加仓一档（定投分批建仓），每反弹 5% 减仓对应档位兑现收益；3. 严禁追高：偏离 MA20 超过 10% 坚决停止加仓。",
+                "source_info": "全网成熟指数定投战法",
+                "rationale": "补齐 ETF 与指数投资专用武器，克服追涨杀跌，实现逆向网格分批高抛低吸"
+            },
+            {
+                "name": "🚀 龙回头缩量二波突破战法 (股票短线)",
+                "category": "SHORT_TERM",
+                "content": "【顶级战法: 龙回头二波爆发战法】1. 选股前提：标的前期出现过至少 3 连板或 30% 以上强势拉升；2. 回调买点：缩量回调至 20 日均线或前期突破箱顶，且成交量萎缩至拉升期 1/3 以下；3. 启动确认：出现放量阳线反包时果断介入，破 20 日线 3% 止损。",
+                "source_info": "游资经典二次爆发战法",
+                "rationale": "捕捉龙头股主升浪后第二波行情的确定性机会，盈亏比极佳"
+            }
+        ]
+
+        summary = f"本次规则审计共评估 {len(memories)} 条经验，建议淘汰 {len(prune_items)} 条无效/冗余条目，升级优化 {len(enhanced_items)} 条已有经验，推荐补充 {len(recommended_items)} 条全网热门有效战法（涵盖股票短线与ETF网格），保留 {len(keep_items)} 条核心实操规则。"
+        return {
+            "summary": summary,
+            "prune_items": prune_items,
+            "enhanced_items": enhanced_items,
+            "recommended_items": recommended_items,
+            "merged_items": merged_items,
+            "keep_items": keep_items
+        }
 
     @classmethod
     async def generate_analysis_stream(

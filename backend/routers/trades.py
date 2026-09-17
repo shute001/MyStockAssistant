@@ -50,6 +50,7 @@ class BatchDeletePayload(BaseModel):
     ids: List[int]
 
 class TradeUpdatePayload(BaseModel):
+    trade_type: Optional[str] = None  # "BUY" | "SELL"
     strategy_reason: Optional[str] = None
     trade_date: Optional[str] = None
     price: Optional[float] = None
@@ -537,10 +538,15 @@ def clear_all_trades(db: Session = Depends(get_db)):
 @router.put("/{trade_id}")
 @router.put("/{trade_id}/reason")
 def update_trade_record(trade_id: int, payload: TradeUpdatePayload, db: Session = Depends(get_db)):
-    """Update trade record fields including strategy reason, trade date/time, price, volume, and tags"""
+    """Update trade record fields including trade type, strategy reason, trade date/time, price, volume, and tags"""
     trade = db.query(TradeRecord).filter(TradeRecord.id == trade_id).first()
     if not trade:
         raise HTTPException(status_code=404, detail="Trade record not found")
+
+    if payload.trade_type is not None:
+        tt = payload.trade_type.strip().upper()
+        if tt in ["BUY", "SELL"]:
+            trade.trade_type = tt
 
     if payload.strategy_reason is not None:
         trade.strategy_reason = payload.strategy_reason.strip()
@@ -568,6 +574,7 @@ def update_trade_record(trade_id: int, payload: TradeUpdatePayload, db: Session 
     return {
         "status": "success",
         "trade_id": trade_id,
+        "trade_type": trade.trade_type,
         "strategy_reason": trade.strategy_reason,
         "trade_date": trade.trade_date.strftime("%Y-%m-%d %H:%M:%S") if trade.trade_date else ""
     }

@@ -100,9 +100,13 @@ export interface TradeRecordItem {
   created_at: string;
 }
 
+export type StrategyCategory = 'SHORT_TERM' | 'MID_TERM' | 'LONG_TERM' | 'ETF_FUND' | 'GENERAL';
+
 export interface AgentMemoryItem {
   id: number;
   memory_type: 'MASTER_PLAYBOOK' | 'USER_HABIT' | 'LESSON_LEARNED' | 'TRADING_STYLE' | 'SCREENING_RULE' | 'POSITION_RULE' | string;
+  category?: StrategyCategory | string;
+  category_label?: string;
   content: string;
   importance: number;
   source_info: string;
@@ -113,6 +117,7 @@ export interface AgentMemoryItem {
 export interface MasterPlaybookItem {
   id: string;
   name: string;
+  category?: StrategyCategory | string;
   description: string;
   content: string;
   importance: number;

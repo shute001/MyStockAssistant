@@ -336,6 +336,20 @@ def create_watchlist(item: WatchlistCreate, db: Session = Depends(get_db)):
             w.remark = item.remark
         db.commit()
         db.refresh(w)
+
+    # Background async sync 1-year K-line into SQLite for AI instant access
+    import threading
+    from database import SessionLocal
+    def _bg_sync(sym):
+        bg_db = SessionLocal()
+        try:
+            MarketDataService.sync_stock_klines_to_db(bg_db, sym, days=365)
+        except Exception:
+            pass
+        finally:
+            bg_db.close()
+    threading.Thread(target=_bg_sync, args=(symbol,), daemon=True).start()
+
     return {"status": "success", "id": w.id, "category": w.category}
 
 @router.get("/categories")
@@ -526,3 +540,25 @@ def get_market_health():
 def get_market_macro():
     """Fetch real-time A-Share Major Indices, Hot Sectors and Live News Headlines"""
     return MarketDataService.get_market_macro_context()
+
+class KlineSyncRequest(BaseModel):
+    symbol: Optional[str] = None
+    days: Optional[int] = 365
+
+@router.post("/sync-klines")
+def sync_stock_klines(req: Optional[KlineSyncRequest] = None, db: Session = Depends(get_db)):
+    """Sync 1-year K-lines into database for a single stock or all watchlist & position stocks"""
+    symbol = req.symbol if req else None
+    days = req.days if req and req.days else 365
+    if symbol:
+        res = MarketDataService.sync_stock_klines_to_db(db, symbol, days=days)
+        res["name"] = MarketDataService.get_stock_name(symbol)
+        return res
+    else:
+        return MarketDataService.sync_all_watchlists_klines(db, days=days)
+
+@router.get("/search")
+def search_stocks(q: str = Query(..., min_length=1)):
+    """Fuzzy search A-shares & ETFs by name, pinyin, or code using Tencent Smartbox"""
+    return MarketDataService.search_stock_by_query(q)
+

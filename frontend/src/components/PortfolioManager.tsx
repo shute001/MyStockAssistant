@@ -61,6 +61,20 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
   const [importCategory, setImportCategory] = useState<string>('同花顺板块');
   const [isParsing, setIsParsing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSyncingKlines, setIsSyncingKlines] = useState(false);
+
+  const handleSyncKlines = async () => {
+    setIsSyncingKlines(true);
+    try {
+      const res = await axios.post('/api/v1/stocks/sync-klines');
+      const elapsed = res.data.elapsed_seconds ? `（多线程并发仅耗时 ${res.data.elapsed_seconds} 秒）` : '';
+      alert(`🎉 1年K线并发同步完成！${elapsed}\n已成功将 ${res.data.synced} / ${res.data.total} 只自选与持仓标的过去 1 年的日K线及全维量化指标落库存储，AI 交易教练与选股 Agent 已具备毫秒级离线推演能力！`);
+    } catch (err) {
+      alert('同步失败，请检查网络连接');
+    } finally {
+      setIsSyncingKlines(false);
+    }
+  };
 
   // Manual Add Form State
   const [symbol, setSymbol] = useState('');
@@ -570,13 +584,25 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
         </div>
 
 
-        <button
-          onClick={() => setIsImportModalOpen(true)}
-          className="flex items-center space-x-2 px-4 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all border border-indigo-400/30"
-        >
-          <Upload className="w-4 h-4 text-white" />
-          <span>📥 导入同花顺持仓表 / 板块 (.xls/.htm/.csv)</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={handleSyncKlines}
+            disabled={isSyncingKlines}
+            className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/30 hover:border-cyan-400/60 font-semibold text-xs rounded-xl shadow transition-all disabled:opacity-50"
+            title="将所有自选与持仓标的过去1年历史日K线及全维量化指标落库存储到本地SQLite"
+          >
+            <span className={isSyncingKlines ? "animate-spin" : ""}>⚡</span>
+            <span>{isSyncingKlines ? '正在并发同步1年K线...' : '并发同步1年K线入库'}</span>
+          </button>
+
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="flex items-center space-x-2 px-4 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg shadow-indigo-600/30 transition-all border border-indigo-400/30"
+          >
+            <Upload className="w-4 h-4 text-white" />
+            <span>📥 导入同花顺持仓表 / 板块 (.xls/.htm/.csv)</span>
+          </button>
+        </div>
 
       </div>
 

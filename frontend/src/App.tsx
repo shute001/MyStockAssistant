@@ -140,7 +140,9 @@ export const App: React.FC = () => {
       <Suspense fallback={<LoadingWorkspace />}>
 
       {/* Main App Workspace */}
-      <main className="app-content flex-1 max-w-7xl w-full mx-auto px-4 py-5 sm:px-6 sm:py-7 xl:px-8">
+      <main className={`app-content flex-1 w-full mx-auto px-4 py-5 sm:px-6 sm:py-7 xl:px-8 transition-all ${
+        activeTab === 'ai' || activeTab === 'trade_review' ? 'max-w-[1780px]' : 'max-w-7xl'
+      }`}>
         {activeTab === 'dashboard' && (
           <Dashboard
             positions={positions}

@@ -190,6 +190,7 @@ class MemoryCreateRequest(BaseModel):
     content: str
     memory_type: Optional[str] = "USER_HABIT"
     importance: Optional[int] = 3
+    category: Optional[str] = "SHORT_TERM"
 
 class ActivatePlaybookRequest(BaseModel):
     playbook_id: str
@@ -197,6 +198,12 @@ class ActivatePlaybookRequest(BaseModel):
 class ExtractRulesRequest(BaseModel):
     text: str
     title: Optional[str] = "战法心得文章"
+
+class ApplyOptimizationRequest(BaseModel):
+    delete_ids: List[int] = []
+    merged_items: Optional[List[dict]] = []
+    enhanced_items: Optional[List[dict]] = []
+    recommended_items: Optional[List[dict]] = []
 
 def get_trade_context_for_agent(db: Session, limit_recent: int = 150):
     """
@@ -307,12 +314,41 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
     import re
     last_user_text = payload.messages[-1].content if payload.messages else ""
     symbols_found = set(re.findall(r'\d{6}', last_user_text))
+
+    # Also incorporate stock_context from frontend if provided
+    if payload.stock_context:
+        ctx_syms = re.findall(r'\d{6}', payload.stock_context)
+        for cs in ctx_syms:
+            symbols_found.add(cs)
+        if not ctx_syms:
+            for item in MarketDataService.search_stock_by_query(payload.stock_context):
+                symbols_found.add(item["symbol"])
     
-    # Also match by Chinese stock name in DB or common ETF names
+    # Match by Chinese stock name in DB
     all_stocks = db.query(Stock).all()
     for stk in all_stocks:
         if stk.name and len(stk.name) >= 2 and stk.name in last_user_text:
             symbols_found.add(stk.symbol)
+
+    # Match against known common cache
+    for sym, s_name in MarketDataService._STOCK_NAME_CACHE.items():
+        if s_name in last_user_text:
+            symbols_found.add(sym)
+
+    # Fuzzy search using Smartbox for Chinese words mentioned in message
+    if len(symbols_found) < 3:
+        potential_words = re.findall(r'[\u4e00-\u9fa5A-Za-z0-9]{2,8}', last_user_text)
+        skip_words = {"分析", "股票", "今日", "现在", "走势", "指标", "看看", "怎么样", "买入", "卖出", "建仓", "行情", "技术", "教练", "策略", "这个", "那个", "建议", "复盘", "持仓", "自选"}
+        for word in potential_words:
+            if word in skip_words or len(word) < 2:
+                continue
+            hits = MarketDataService.search_stock_by_query(word)
+            for h in hits:
+                if word in h["name"] or h["name"] in word or h["name"] in last_user_text:
+                    symbols_found.add(h["symbol"])
+                    break
+            if len(symbols_found) >= 3:
+                break
 
     # If no specific stock is mentioned in message, automatically add top 3 holding positions' K-line indicators!
     if not symbols_found and positions:
@@ -321,14 +357,14 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 
     queried_indicators = []
     for sym in list(symbols_found)[:5]:
-        stk_info = MarketDataService.get_stock_indicators_summary(sym)
+        stk_info = MarketDataService.get_stock_indicators_summary(sym, db=db)
         if stk_info and "error" not in stk_info:
             queried_indicators.append(stk_info)
     
     queried_stock_block = ""
     if queried_indicators:
         queried_stock_block = f"""
-### 📌 核心个股与持仓标的【实时 K 线与技术指标研判数据】(包含 MA5/10/20 均线、MACD, KDJ 及 30日支撑与压力位)：
+### 📌 核心个股与持仓标的【最近 10 日 K 线形态、放缩量配合与全维量化指标研判数据】：
 {json.dumps(queried_indicators, ensure_ascii=False, indent=2)}
 """
 
@@ -353,11 +389,13 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 1. 你已经**完全掌握用户导入的全部历史交易账本与交割单数据全貌**！
    - 📊 用户全量历史交割单宏观数据汇总：
 {json.dumps(summary_info, ensure_ascii=False, indent=2)}
-   - 下方【用户近期交易明细日志】为你展示了最近 {len(trade_payload)} 笔成交记录。**请绝对不要误以为用户只导入了二三十笔交易**！你手里已握有全量 {summary_info.get('total_trades_count', len(trade_payload))} 笔交易（时间跨度 {summary_info.get('date_range', '全时间段')}）的准确胜率、盈亏比与 FIFO 累计盈亏！当用户询问“是否收到完整数据”或“分析3年操作”时，你必须非常清晰自信地指出你已掌控全量账本宏观数据及近期详细明细日志！
+   - 下方【用户近期交易明细日志】为你展示了最近 {len(trade_payload)} 笔成交记录。你手里已握有全量 {summary_info.get('total_trades_count', len(trade_payload))} 笔交易（时间跨度 {summary_info.get('date_range', '全时间段')}）的准确胜率、盈亏比与 FIFO 累计盈亏！当用户询问账本或胜率时，清晰自信地指出你已掌控全量账本宏观数据！
 
-2. 你已经**全面接入并拥有获取 A 股全市场及 ETF 的实时价格、K 线图技术指标（MA5/10/20均线多空、MACD金叉死叉、KDJ摆动状态、支撑阻力位）以及联网大盘与财经新闻的能力**！
-当用户询问你“能否获取实时价格和K线图”或“能否联网”时，你必须**非常明确且自信地回答**：
-“完全可以！我已全面接入 A 股及 ETF 的实时价格行情、K 线均线系统（MA5/10/20）、MACD/KDJ 摆动指标以及大盘新闻快讯。您可以直接告诉我任何股票代码（如 159883、600519）或名称（如 医疗器械ETF、贵州茅台），我将立即为您调出最新的实时价格、K 线形态与买卖支撑位进行专业解读！”
+2. 你已经**全面接入并实时掌握上述个股的【最近 10 个交易日真实日 K 线走势序列（每日高开低收、涨跌幅、量比、红绿柱实体形态）】、【半年线与年线牛熊位置（MA120/MA250）】、【过去 1 年价格历史分位数】以及【全套技术指标（MA5/10/20、MACD红绿柱、KDJ摆动、RSI超买超卖、BOLL布林带触轨状态）】！**
+【极其严厉的回答纪律】：
+- 当用户询问具体股票的走势、K线、指标或买卖决策时，你**必须逐一调用并具体引用上方数据中的【近10日K线走势明细中的具体日期、K线形态、成交量量比倍数、均线支撑压制与MACD/KDJ/RSI/BOLL信号】进行环环相扣的技术面推导**！
+- 明确给出具体的【支撑止损线（元）】、【反弹目标压力区间】与【买卖操作逻辑】！
+- **绝对严禁**回复“我无法查看K线”、“我无法获取实时图表”或以任何借口拒绝分析，上面提供的数据即为最完整、最真实的权威行情与形态序列！
 
 3. **微信消息推送能力**：
 你系统层面已完全支持将你的分析、复盘与策略总结实时发送到用户的个人微信（基于 Server酱 / PushPlus / 企业微信通道）！
@@ -376,7 +414,7 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 
 {memories_prompt}
 
-请基于上述大盘宏观热点、实时行情与 K 线指标、全量交割单账本、账户资金全貌、持仓与认知战法，以专业、沉稳、建设性的语气同用户进行对话。如果用户询问某只股票或具体盘口，请直接引用提供的最新行情指标与大盘热点给出犀利而精准的解答！
+请基于上述大盘宏观热点、1年与近10日K线序列、多维技术指标、全量交割单账本、账户资金全貌、持仓与认知战法，以专业、沉稳、建设性的语气同用户进行对话。直接引用提供的最新行情指标与大盘热点给出犀利而精准的解答！
 """
 
     messages_payload = [{"role": msg.role, "content": msg.content} for msg in payload.messages]
@@ -522,9 +560,13 @@ async def push_review_to_wechat(req: PushReviewRequest, db: Session = Depends(ge
 
 
 @router.get("/agent/memories")
-def get_agent_memories(limit: int = Query(50, le=100), db: Session = Depends(get_db)):
-    """Fetch Agent memory bank items"""
-    return AgentMemoryService.get_all_memories(db, limit=limit)
+def get_agent_memories(
+    limit: int = Query(50, le=100), 
+    category: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Fetch Agent memory bank items with optional category filtering"""
+    return AgentMemoryService.get_all_memories(db, limit=limit, category=category)
 
 @router.post("/agent/memories")
 def create_agent_memory(payload: MemoryCreateRequest, db: Session = Depends(get_db)):
@@ -534,7 +576,8 @@ def create_agent_memory(payload: MemoryCreateRequest, db: Session = Depends(get_
         content=payload.content,
         memory_type=payload.memory_type or "USER_HABIT",
         importance=payload.importance or 3,
-        source_info="用户手动添加"
+        source_info="用户手动添加",
+        category=payload.category
     )
     return {"status": "success", "id": mem.id}
 
@@ -545,6 +588,22 @@ def delete_agent_memory(memory_id: int, db: Session = Depends(get_db)):
     if not success:
         raise HTTPException(status_code=404, detail="Memory not found")
     return {"status": "success", "deleted_id": memory_id}
+
+@router.post("/agent/memories/audit")
+async def audit_agent_memories(db: Session = Depends(get_db)):
+    """AI Audit of Agent memories: identify useless/redundant rules and suggest merges"""
+    return await AgentMemoryService.audit_and_optimize(db)
+
+@router.post("/agent/memories/apply-optimization")
+def apply_memory_optimization(payload: ApplyOptimizationRequest, db: Session = Depends(get_db)):
+    """Apply approved pruning, enhancement, additions and merging changes to the memory vault"""
+    return AgentMemoryService.apply_optimization(
+        db=db,
+        delete_ids=payload.delete_ids,
+        merged_items=payload.merged_items,
+        enhanced_items=payload.enhanced_items,
+        recommended_items=payload.recommended_items
+    )
 
 @router.get("/agent/playbooks")
 def get_preset_playbooks(db: Session = Depends(get_db)):
@@ -668,16 +727,31 @@ async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
         if p.symbol not in symbols_map:
             symbols_map[p.symbol] = "持仓股"
 
+    macro_context = MarketDataService.get_market_macro_context()
+
+    # If candidate pool is too small (< 4), automatically add market hot sector representative core ETFs/stocks
+    if len(symbols_map) < 4:
+        hot_defaults = [
+            ("512480", "半导体芯片主线"),
+            ("159883", "医疗器械医药主线"),
+            ("002475", "果链消费电子核心龙头"),
+            ("688981", "科创半导体龙头"),
+            ("601127", "新能源汽车主线龙头"),
+            ("512690", "消费高股息红利ETF")
+        ]
+        for h_sym, h_cat in hot_defaults:
+            if h_sym not in symbols_map:
+                symbols_map[h_sym] = f"全市场热门主线 ({h_cat})"
+
     total_candidates = len(symbols_map)
     user_rules_text = AgentMemoryService.format_memories_for_prompt(db)
-    macro_context = MarketDataService.get_market_macro_context()
 
     async def event_generator():
         # 1. Yield clean initial status banner to frontend
-        yield f"> 📡 **智能选股 Agent 已启动**：正在利用 12 线程并发引擎扫描全量 **{total_candidates}** 只候选标的（自选/持仓）的实时行情、MA 均线、MACD 与 30 日支撑/压力位...\n\n"
+        yield f"> 📡 **智能选股 Agent 已启动**：正在利用并发量化引擎扫描全量 **{total_candidates}** 只候选标的（自选/持仓/领涨主线龙头）的 1 年周期均线、近 10 日 K 线走势序列、量比、MACD/KDJ/RSI/BOLL 全维指标...\n\n"
 
         if total_candidates == 0:
-            yield "⚠️ **选股提示**: 当前自选股与持仓列表中暂无标的。请先在【自选股/板块】中添加关注标的，智能选股 Agent 才能为您匹配战法推选！"
+            yield "⚠️ **选股提示**: 当前候选池为空。请在【自选股/板块】中添加关注标的，智能选股 Agent 才能为您匹配战法推选！"
             return
 
         # 2. Pre-fetch batch quotes in 1 single HTTP request (~50ms)

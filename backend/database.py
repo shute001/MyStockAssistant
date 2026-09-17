@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from config import settings
@@ -109,6 +109,7 @@ class AgentMemory(Base):
     content = Column(Text, nullable=False)               # 记忆内容
     importance = Column(Integer, default=3)             # 重要程度 1-5
     source_info = Column(String, nullable=True)          # 产生来源说明 (如 2026-09-02 复盘)
+    category = Column(String, default="SHORT_TERM")     # SHORT_TERM (股票短线) | MID_TERM (股票中线) | LONG_TERM (股票长线) | ETF_FUND (ETF/基金) | GENERAL (通用风控)
     created_at = Column(DateTime, default=bj_now)
     updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
 
@@ -132,6 +133,47 @@ class AccountFund(Base):
     withdrawable_cash = Column(Float, default=314.13)    # 可取金额 (元)
     frozen_amount = Column(Float, default=-67002.55)     # 冻结金额 (元)
     updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
+
+class StockKline(Base):
+    __tablename__ = "stock_klines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, nullable=False, index=True)      # e.g., "600519"
+    date = Column(String, nullable=False, index=True)        # e.g., "2026-09-16"
+    open = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    volume = Column(Integer, default=0)                      # 成交量
+    amount = Column(Float, default=0.0)                      # 成交额
+    pct_chg = Column(Float, default=0.0)                     # 涨跌幅 %
+    turnover = Column(Float, default=0.0)                    # 换手率 %
+    # 均线系统 (短中长)
+    ma5 = Column(Float, nullable=True)
+    ma10 = Column(Float, nullable=True)
+    ma20 = Column(Float, nullable=True)
+    ma60 = Column(Float, nullable=True)
+    ma120 = Column(Float, nullable=True)                     # 半年线
+    ma250 = Column(Float, nullable=True)                     # 年线 (牛熊线)
+    # 动量与摆动指标
+    macd_dif = Column(Float, nullable=True)
+    macd_dea = Column(Float, nullable=True)
+    macd_hist = Column(Float, nullable=True)
+    kdj_k = Column(Float, nullable=True)
+    kdj_d = Column(Float, nullable=True)
+    kdj_j = Column(Float, nullable=True)
+    rsi6 = Column(Float, nullable=True)
+    rsi12 = Column(Float, nullable=True)
+    rsi24 = Column(Float, nullable=True)
+    boll_up = Column(Float, nullable=True)
+    boll_mid = Column(Float, nullable=True)
+    boll_down = Column(Float, nullable=True)
+    vol_ratio = Column(Float, nullable=True)                 # 量比 (Vol / Vol_MA5)
+    created_at = Column(DateTime, default=bj_now)
+
+    __table_args__ = (
+        UniqueConstraint('symbol', 'date', name='uq_stock_kline_symbol_date'),
+    )
 
 
 def init_db():
@@ -168,5 +210,12 @@ def init_db():
                 conn.commit()
         except Exception:
             pass
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE agent_memories ADD COLUMN category VARCHAR DEFAULT 'SHORT_TERM';"))
+            conn.commit()
+    except Exception:
+        pass
 
 
