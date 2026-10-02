@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from pydantic import BaseModel
-from database import get_db, Stock, Position, Watchlist
+from database import get_db, Stock, Position, Watchlist, PositionCondition, AlertNotification, bj_now
 from services.market_data import MarketDataService
+from services.condition_engine import ConditionEngine
 
 router = APIRouter(prefix="/stocks", tags=["Stocks & Portfolio"])
 
@@ -13,7 +14,10 @@ class PositionCreate(BaseModel):
     name: Optional[str] = None
     cost_price: float
     current_volume: int
-    strategy_tag: Optional[str] = "长线持有"
+    strategy_tag: Optional[str] = "长线定投"
+
+class PositionStrategyTagUpdate(BaseModel):
+    strategy_tag: str
 
 class WatchlistCreate(BaseModel):
     symbol: str
@@ -117,6 +121,14 @@ def get_positions(
         cp = quote.get("current_price") or pos.cost_price
         total_portfolio_market_value += cp * pos.current_volume
 
+    active_conds = db.query(PositionCondition.symbol).filter(
+        PositionCondition.is_active == True,
+        PositionCondition.is_triggered == False
+    ).all()
+    cond_count_map = {}
+    for (csym,) in active_conds:
+        cond_count_map[csym] = cond_count_map.get(csym, 0) + 1
+
     for pos in positions:
         stock = stocks_by_symbol.get(pos.symbol)
         quote = batch_quotes.get(pos.symbol, {})
@@ -174,6 +186,7 @@ def get_positions(
             "macd_status": "看多" if pct_num >= 0 else "回调",
             "support_price": round(current_price * 0.95, 2),
             "resistance_price": round(current_price * 1.05, 2),
+            "condition_count": cond_count_map.get(pos.symbol, 0),
             "quote_status": "live" if quote else "unavailable",
             "quote_updated_at": quote_health.get("updated_at")
         })
@@ -225,6 +238,22 @@ def delete_position(pos_id: int, db: Session = Depends(get_db)):
     db.delete(pos)
     db.commit()
     return {"status": "success"}
+
+@router.patch("/positions/{pos_id}/strategy-tag")
+def update_position_strategy_tag(
+    pos_id: int, 
+    item: PositionStrategyTagUpdate, 
+    db: Session = Depends(get_db)
+):
+    """Update position investment horizon or strategy tag (e.g., 短线博弈, 中线波段, 长线定投, 网格底仓)"""
+    pos = db.query(Position).filter(Position.id == pos_id).first()
+    if not pos:
+        raise HTTPException(status_code=404, detail="Position not found")
+    pos.strategy_tag = item.strategy_tag.strip()
+    db.commit()
+    db.refresh(pos)
+    return {"status": "success", "id": pos.id, "strategy_tag": pos.strategy_tag}
+
 
 @router.get("/watchlists")
 def get_watchlists(db: Session = Depends(get_db)):
@@ -522,9 +551,14 @@ def delete_watchlist(w_id: int, db: Session = Depends(get_db)):
     return {"status": "success"}
 
 @router.get("/{symbol}/kline")
-def get_kline(symbol: str, response: Response, days: int = Query(60, ge=10, le=250)):
-    """Get K-line candlestick and technical indicator dataset for chart display"""
-    df = MarketDataService.get_stock_kline(symbol, days=days)
+def get_kline(
+    symbol: str, 
+    response: Response, 
+    days: int = Query(60, ge=10, le=365),
+    period: Optional[str] = Query("day", description="day | week | month")
+):
+    """Get K-line candlestick and technical indicator dataset for chart display with multi-timeframe support"""
+    df = MarketDataService.get_stock_kline(symbol, days=days, period=period)
     health = MarketDataService.get_data_health()["kline"]
     response.headers["X-Market-Data-Status"] = health.get("status", "unknown")
     response.headers["X-Market-Data-Source"] = health.get("source") or "unknown"
@@ -561,4 +595,304 @@ def sync_stock_klines(req: Optional[KlineSyncRequest] = None, db: Session = Depe
 def search_stocks(q: str = Query(..., min_length=1)):
     """Fuzzy search A-shares & ETFs by name, pinyin, or code using Tencent Smartbox"""
     return MarketDataService.search_stock_by_query(q)
+
+
+# ==========================================
+# 止损止盈条件监控 (Stop-Loss & Take-Profit)
+# ==========================================
+
+class ConditionCreate(BaseModel):
+    symbol: Optional[str] = None
+    name: Optional[str] = None
+    condition_type: str  # TARGET_PROFIT, STOP_LOSS, MA_CROSS_BELOW, MA_CROSS_ABOVE, MACD_DEATH_CROSS, MACD_GOLDEN_CROSS, TRAILING_STOP
+    condition_label: Optional[str] = None
+    target_value: Optional[float] = None
+    ma_period: Optional[int] = None
+    trail_percent: Optional[float] = None
+    notify_wechat: bool = True
+    notify_popup: bool = True
+    strategy_note: Optional[str] = None
+
+class BatchConditionCreate(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+    conditions: List[ConditionCreate]
+
+class ConditionUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    condition_label: Optional[str] = None
+    target_value: Optional[float] = None
+    ma_period: Optional[int] = None
+    trail_percent: Optional[float] = None
+    notify_wechat: Optional[bool] = None
+    notify_popup: Optional[bool] = None
+    strategy_note: Optional[str] = None
+
+class MarkReadRequest(BaseModel):
+    alert_ids: Optional[List[int]] = None
+
+@router.get("/conditions")
+def get_conditions(symbol: Optional[str] = None, db: Session = Depends(get_db)):
+    """Fetch conditions, optionally filtered by stock symbol"""
+    query = db.query(PositionCondition)
+    if symbol:
+        sym_fmt = MarketDataService.format_symbol(symbol)
+        query = query.filter(PositionCondition.symbol == sym_fmt)
+    conditions = query.order_by(PositionCondition.created_at.desc()).all()
+
+    symbols = list({c.symbol for c in conditions})
+    quotes = MarketDataService.get_batch_realtime_quotes(symbols) if symbols else {}
+
+    result = []
+    for c in conditions:
+        q = quotes.get(c.symbol, {})
+        curr_p = q.get("current_price", 0.0)
+        result.append({
+            "id": c.id,
+            "symbol": c.symbol,
+            "name": c.name,
+            "condition_type": c.condition_type,
+            "condition_label": c.condition_label,
+            "target_value": c.target_value,
+            "ma_period": c.ma_period,
+            "trail_percent": c.trail_percent,
+            "highest_price": c.highest_price,
+            "notify_wechat": c.notify_wechat,
+            "notify_popup": c.notify_popup,
+            "is_active": c.is_active,
+            "is_triggered": c.is_triggered,
+            "triggered_at": c.triggered_at.strftime("%Y-%m-%d %H:%M:%S") if c.triggered_at else None,
+            "trigger_reason": c.trigger_reason,
+            "strategy_note": c.strategy_note,
+            "created_at": c.created_at.strftime("%Y-%m-%d %H:%M:%S") if c.created_at else None,
+            "current_price": curr_p
+        })
+    return result
+
+@router.post("/conditions")
+def create_condition(item: ConditionCreate, db: Session = Depends(get_db)):
+    """Create a single stop-loss or take-profit condition"""
+    if not item.symbol:
+        raise HTTPException(status_code=400, detail="必须提供股票代码 symbol")
+    sym = MarketDataService.format_symbol(item.symbol)
+    name = item.name or MarketDataService.get_stock_name(sym)
+    quote = MarketDataService.get_realtime_quote(sym)
+    curr_p = quote.get("current_price", 0.0)
+
+    cond = PositionCondition(
+        symbol=sym,
+        name=name,
+        condition_type=item.condition_type.upper(),
+        condition_label=item.condition_label,
+        target_value=item.target_value,
+        ma_period=item.ma_period,
+        trail_percent=item.trail_percent,
+        highest_price=curr_p if curr_p > 0 else None,
+        notify_wechat=item.notify_wechat,
+        notify_popup=item.notify_popup,
+        strategy_note=item.strategy_note,
+        is_active=True,
+        is_triggered=False
+    )
+    db.add(cond)
+    db.commit()
+    db.refresh(cond)
+    return {"status": "success", "id": cond.id, "message": "条件规则创建成功"}
+
+@router.post("/conditions/batch")
+def batch_create_conditions(req: BatchConditionCreate, db: Session = Depends(get_db)):
+    """Batch create conditions (e.g. from AI 1-click apply or modal template)"""
+    sym = MarketDataService.format_symbol(req.symbol)
+    name = req.name or MarketDataService.get_stock_name(sym)
+    quote = MarketDataService.get_realtime_quote(sym)
+    curr_p = quote.get("current_price", 0.0)
+
+    created_ids = []
+    for item in req.conditions:
+        item_sym = MarketDataService.format_symbol(item.symbol) if item.symbol else sym
+        item_name = item.name or name
+        cond = PositionCondition(
+            symbol=item_sym,
+            name=item_name,
+            condition_type=item.condition_type.upper(),
+            condition_label=item.condition_label,
+            target_value=item.target_value,
+            ma_period=item.ma_period,
+            trail_percent=item.trail_percent,
+            highest_price=curr_p if curr_p > 0 else None,
+            notify_wechat=item.notify_wechat,
+            notify_popup=item.notify_popup,
+            strategy_note=item.strategy_note,
+            is_active=True,
+            is_triggered=False
+        )
+        db.add(cond)
+        db.flush()
+        created_ids.append(cond.id)
+
+    db.commit()
+    return {
+        "status": "success",
+        "count": len(created_ids),
+        "ids": created_ids,
+        "message": f"成功为【{name} ({sym})】批量设定 {len(created_ids)} 条监控规则"
+    }
+
+@router.put("/conditions/{condition_id}")
+def update_condition(condition_id: int, req: ConditionUpdate, db: Session = Depends(get_db)):
+    """Update condition status or parameters"""
+    cond = db.query(PositionCondition).filter(PositionCondition.id == condition_id).first()
+    if not cond:
+        raise HTTPException(status_code=404, detail="未找到该监控条件")
+
+    if req.is_active is not None:
+        cond.is_active = req.is_active
+        if req.is_active and cond.is_triggered:
+            cond.is_triggered = False
+            cond.triggered_at = None
+            cond.trigger_reason = None
+    if req.condition_label is not None:
+        cond.condition_label = req.condition_label
+    if req.target_value is not None:
+        cond.target_value = req.target_value
+    if req.ma_period is not None:
+        cond.ma_period = req.ma_period
+    if req.trail_percent is not None:
+        cond.trail_percent = req.trail_percent
+    if req.notify_wechat is not None:
+        cond.notify_wechat = req.notify_wechat
+    if req.notify_popup is not None:
+        cond.notify_popup = req.notify_popup
+    if req.strategy_note is not None:
+        cond.strategy_note = req.strategy_note
+
+    db.commit()
+    return {"status": "success", "message": "条件已更新"}
+
+@router.delete("/conditions/{condition_id}")
+def delete_condition(condition_id: int, db: Session = Depends(get_db)):
+    """Delete a condition"""
+    cond = db.query(PositionCondition).filter(PositionCondition.id == condition_id).first()
+    if not cond:
+        raise HTTPException(status_code=404, detail="未找到该监控条件")
+    db.delete(cond)
+    db.commit()
+    return {"status": "success", "message": "条件已删除"}
+
+@router.get("/conditions/ai-suggest")
+def get_ai_suggested_conditions(symbol: str = Query(...), db: Session = Depends(get_db)):
+    """Get smart AI/Quant suggested stop-loss, take-profit, MA and MACD rules for a stock"""
+    sym = MarketDataService.format_symbol(symbol)
+    pos = db.query(Position).filter(Position.symbol == sym).first()
+    cost_p = pos.cost_price if pos else None
+    return ConditionEngine.suggest_conditions_for_stock(sym, cost_price=cost_p, db=db)
+
+@router.post("/conditions/check-now")
+async def check_conditions_now(db: Session = Depends(get_db)):
+    """Manually evaluate all conditions immediately and return triggered alerts"""
+    alerts = await ConditionEngine.evaluate_all_conditions(db)
+    return {
+        "status": "success",
+        "triggered_count": len(alerts),
+        "alerts": [
+            {
+                "id": a.id,
+                "symbol": a.symbol,
+                "name": a.name,
+                "title": a.title,
+                "message": a.message,
+                "trigger_price": a.trigger_price,
+                "wechat_status": a.wechat_status
+            }
+            for a in alerts
+        ]
+    }
+
+@router.get("/alerts")
+def get_alerts(unread_only: bool = Query(False), limit: int = Query(50), db: Session = Depends(get_db)):
+    """Get alert notifications history"""
+    query = db.query(AlertNotification)
+    if unread_only:
+        query = query.filter(AlertNotification.is_read == False)
+    alerts = query.order_by(AlertNotification.created_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": a.id,
+            "condition_id": a.condition_id,
+            "symbol": a.symbol,
+            "name": a.name,
+            "alert_type": a.alert_type,
+            "title": a.title,
+            "message": a.message,
+            "trigger_price": a.trigger_price,
+            "cost_price": a.cost_price,
+            "profit_ratio": a.profit_ratio,
+            "is_read": a.is_read,
+            "wechat_status": a.wechat_status,
+            "created_at": a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else None
+        }
+        for a in alerts
+    ]
+
+@router.get("/alerts/unread")
+def get_unread_alerts(db: Session = Depends(get_db)):
+    """Fetch unread alerts for global popup warning"""
+    alerts = (
+        db.query(AlertNotification)
+        .filter(AlertNotification.is_read == False)
+        .order_by(AlertNotification.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    return [
+        {
+            "id": a.id,
+            "condition_id": a.condition_id,
+            "symbol": a.symbol,
+            "name": a.name,
+            "alert_type": a.alert_type,
+            "title": a.title,
+            "message": a.message,
+            "trigger_price": a.trigger_price,
+            "cost_price": a.cost_price,
+            "profit_ratio": a.profit_ratio,
+            "created_at": a.created_at.strftime("%Y-%m-%d %H:%M:%S") if a.created_at else None
+        }
+        for a in alerts
+    ]
+
+@router.post("/alerts/mark-read")
+def mark_alerts_read(req: Optional[MarkReadRequest] = None, db: Session = Depends(get_db)):
+    """Mark alerts as read"""
+    if req and req.alert_ids:
+        db.query(AlertNotification).filter(AlertNotification.id.in_(req.alert_ids)).update(
+            {"is_read": True}, synchronize_session=False
+        )
+    else:
+        db.query(AlertNotification).filter(AlertNotification.is_read == False).update(
+            {"is_read": True}, synchronize_session=False
+        )
+    db.commit()
+    return {"status": "success", "message": "已标记为已读"}
+
+@router.delete("/alerts/{alert_id}")
+def delete_single_alert(alert_id: int, db: Session = Depends(get_db)):
+    """Delete a single alert record"""
+    alert = db.query(AlertNotification).filter(AlertNotification.id == alert_id).first()
+    if alert:
+        db.delete(alert)
+        db.commit()
+    return {"status": "success", "message": "预警记录已删除"}
+
+@router.delete("/alerts")
+def clear_alerts(only_read: bool = Query(False), db: Session = Depends(get_db)):
+    """Clear alerts history (optionally only read ones)"""
+    query = db.query(AlertNotification)
+    if only_read:
+        query = query.filter(AlertNotification.is_read == True)
+    deleted_count = query.delete(synchronize_session=False)
+    db.commit()
+    return {"status": "success", "deleted_count": deleted_count, "message": f"已清空 {deleted_count} 条预警历史"}
+
+
 

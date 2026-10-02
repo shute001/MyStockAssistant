@@ -78,6 +78,46 @@ class MarketDataService:
         return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
 
     @classmethod
+    def get_latest_trading_date(cls) -> str:
+        """
+        Calculate the expected latest completed or ongoing trading day string (YYYY-MM-DD).
+        - Saturday (5) / Sunday (6): rolls back to Friday.
+        - Weekday before 09:15: rolls back to previous trading day.
+        - Weekday after 09:15: current day.
+        """
+        now = bj_now()
+        dt = now.date()
+        if dt.weekday() == 5:  # Saturday
+            dt = dt - datetime.timedelta(days=1)
+        elif dt.weekday() == 6:  # Sunday
+            dt = dt - datetime.timedelta(days=2)
+        elif now.hour < 9 or (now.hour == 9 and now.minute < 15):
+            prev_dt = dt - datetime.timedelta(days=1)
+            while prev_dt.weekday() >= 5:
+                prev_dt -= datetime.timedelta(days=1)
+            dt = prev_dt
+        return dt.strftime("%Y-%m-%d")
+
+    @classmethod
+    def is_trading_time(cls) -> bool:
+        """
+        Check if China A-Share market is currently in active trading session.
+        Monday to Friday (weekday 0-4):
+        - Morning session: 09:15 - 11:35 (including call auction and buffer)
+        - Afternoon session: 12:55 - 15:05 (including closing call auction and buffer)
+        """
+        now = bj_now()
+        if now.weekday() >= 5:  # Saturday or Sunday
+            return False
+        # Morning: 09:15 to 11:35
+        if (now.hour == 9 and now.minute >= 15) or (now.hour == 10) or (now.hour == 11 and now.minute <= 35):
+            return True
+        # Afternoon: 12:55 to 15:05
+        if (now.hour == 12 and now.minute >= 55) or (now.hour in (13, 14)) or (now.hour == 15 and now.minute <= 5):
+            return True
+        return False
+
+    @classmethod
     def get_data_health(cls) -> Dict[str, Dict[str, Any]]:
         """Return non-price metadata so clients can distinguish live, delayed and mock data."""
         return {
@@ -252,87 +292,128 @@ class MarketDataService:
 
     @classmethod
     def _fetch_remote_kline(cls, symbol: str, days: int = 365) -> pd.DataFrame:
-        """Fetch forward-split-adjusted (qfq) daily K-lines from Tencent / EastMoney API"""
+        """Fetch forward-split-adjusted (qfq) daily K-lines with accurate turnover & percentage change"""
         symbol = cls.format_symbol(symbol)
-        prefix, _ = cls.get_symbol_prefix_and_market(symbol)
-        
-        # 1. Tencent Finance qfq API
-        url = f"http://proxy.finance.qq.com/ifzq/appstock/app/fqkline/get?param={prefix}{symbol},day,,,{days},qfq"
         df = pd.DataFrame()
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'http://finance.qq.com/'
-            }
-            req = urllib.request.Request(url, headers=headers)
-            res = json.loads(urllib.request.urlopen(req, timeout=5).read().decode('utf-8'))
-            data = res.get("data", {}).get(f"{prefix}{symbol}", {})
-            klines = data.get("qfqday") or data.get("day", [])
-            records = []
-            for bar in klines:
-                close_p = float(bar[2])
-                open_p = float(bar[1])
-                records.append({
-                    "date": bar[0],
-                    "symbol": symbol,
-                    "open": open_p,
-                    "close": close_p,
-                    "high": float(bar[3]),
-                    "low": float(bar[4]),
-                    "volume": int(float(bar[5])) if len(bar) > 5 else 0,
-                    "amount": round(close_p * (int(float(bar[5])) if len(bar) > 5 else 0), 2),
-                    "pct_chg": round((close_p - open_p) / open_p * 100, 2) if open_p > 0 else 0.0,
-                    "turnover": 0.0
-                })
-            if records:
-                df = pd.DataFrame(records)
-        except Exception as e:
-            logger.error(f"Error fetching Tencent K-line for {symbol}: {e}")
 
-        # 2. Fallback to Eastmoney REST API
-        if df.empty:
+        # 1. Primary Source: EastMoney REST API (Provides accurate daily pct_chg vs pre_close & turnover %)
+        try:
             _, market = cls.get_symbol_prefix_and_market(symbol)
             secid = f"{market}.{symbol}"
             url_em = f"http://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&end=20500101&lmt={days}"
+            req = urllib.request.Request(url_em, headers={'User-Agent': 'Mozilla/5.0'})
+            res = json.loads(urllib.request.urlopen(req, timeout=5).read().decode('utf-8'))
+            data = res.get("data") if res and isinstance(res, dict) else None
+            klines = data.get("klines", []) if data and isinstance(data, dict) else []
+            records = []
+            for line in klines:
+                parts = line.split(',')
+                # parts: 0=date, 1=open, 2=close, 3=high, 4=low, 5=vol, 6=amount, 7=amp, 8=pct_chg, 9=chg, 10=turnover
+                records.append({
+                    "date": parts[0],
+                    "symbol": symbol,
+                    "open": float(parts[1]),
+                    "close": float(parts[2]),
+                    "high": float(parts[3]),
+                    "low": float(parts[4]),
+                    "volume": int(parts[5]),
+                    "amount": float(parts[6]),
+                    "pct_chg": float(parts[8]),
+                    "turnover": float(parts[10]) if len(parts) > 10 and parts[10] != "" else 0.0
+                })
+            if records:
+                df = pd.DataFrame(records)
+                cls._kline_health = {
+                    "status": "live",
+                    "source": "EastMoney",
+                    "updated_at": cls._now_text(),
+                    "message": "成功拉取完整K线及换手率数据"
+                }
+        except Exception as e:
+            logger.warning(f"EastMoney K-line failed for {symbol}, trying Tencent: {e}")
+
+        # 2. Secondary Fallback: Tencent Finance qfq API
+        if df.empty:
+            prefix, _ = cls.get_symbol_prefix_and_market(symbol)
+            url_qq = f"http://proxy.finance.qq.com/ifzq/appstock/app/fqkline/get?param={prefix}{symbol},day,,,{days},qfq"
             try:
-                req = urllib.request.Request(url_em, headers={'User-Agent': 'Mozilla/5.0'})
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Referer': 'http://finance.qq.com/'
+                }
+                req = urllib.request.Request(url_qq, headers=headers)
                 res = json.loads(urllib.request.urlopen(req, timeout=5).read().decode('utf-8'))
-                data = res.get("data") if res and isinstance(res, dict) else None
-                klines = data.get("klines", []) if data and isinstance(data, dict) else []
+                data = res.get("data", {}).get(f"{prefix}{symbol}", {})
+                klines = data.get("qfqday") or data.get("day", [])
                 records = []
-                for line in klines:
-                    parts = line.split(',')
+                prev_close = None
+                for bar in klines:
+                    open_p = float(bar[1])
+                    close_p = float(bar[2])
+                    high_p = float(bar[3])
+                    low_p = float(bar[4])
+                    vol = int(float(bar[5])) if len(bar) > 5 else 0
+                    if prev_close is not None and prev_close > 0:
+                        chg_pct = round((close_p - prev_close) / prev_close * 100, 2)
+                    else:
+                        chg_pct = round((close_p - open_p) / open_p * 100, 2) if open_p > 0 else 0.0
+                    prev_close = close_p
+
                     records.append({
-                        "date": parts[0],
+                        "date": bar[0],
                         "symbol": symbol,
-                        "open": float(parts[1]),
-                        "close": float(parts[2]),
-                        "high": float(parts[3]),
-                        "low": float(parts[4]),
-                        "volume": int(parts[5]),
-                        "amount": float(parts[6]),
-                        "pct_chg": float(parts[8]),
-                        "turnover": float(parts[10]) if len(parts) > 10 else 0.0
+                        "open": open_p,
+                        "close": close_p,
+                        "high": high_p,
+                        "low": low_p,
+                        "volume": vol,
+                        "amount": round(close_p * vol, 2),
+                        "pct_chg": chg_pct,
+                        "turnover": 0.0
                     })
                 if records:
                     df = pd.DataFrame(records)
+                    cls._kline_health = {
+                        "status": "live",
+                        "source": "Tencent Finance",
+                        "updated_at": cls._now_text(),
+                        "message": "使用腾讯财经前复权K线"
+                    }
             except Exception as e:
-                logger.error(f"Error fetching Eastmoney K-line for {symbol}: {e}")
+                logger.error(f"Error fetching Tencent K-line for {symbol}: {e}")
 
-        # 3. Fallback to realistic mock if offline
+        # 3. Tertiary Fallback: realistic mock if completely offline
         if df.empty:
             df = cls._generate_mock_kline(symbol, days)
+            cls._kline_health = {
+                "status": "mock",
+                "source": "Mock Generator",
+                "updated_at": cls._now_text(),
+                "message": "离线状态使用模拟K线"
+            }
 
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
         df = df.sort_values("date").reset_index(drop=True)
 
-        # Update latest bar with real-time price if market open
+        # Update latest bar with real-time quote if market is currently open
+        now = bj_now()
+        is_trading_time = (now.weekday() < 5) and (
+            (now.hour == 9 and now.minute >= 30) or (10 <= now.hour <= 14) or (now.hour == 15 and now.minute <= 5)
+        )
         quote = cls.get_realtime_quote(symbol)
-        if quote["current_price"] > 0 and len(df) > 0:
-            df.at[df.index[-1], "close"] = quote["current_price"]
-            df.at[df.index[-1], "pct_chg"] = quote["pct_chg_num"]
+        if len(df) > 0 and quote.get("current_price", 0) > 0:
+            if is_trading_time:
+                # Intraday: dynamically reflect current fluctuating price on the latest bar
+                df.at[df.index[-1], "close"] = quote["current_price"]
+                df.at[df.index[-1], "pct_chg"] = quote["pct_chg_num"]
+            else:
+                # Post-market / Weekend: if latest bar date is the expected last trading day, ensure exact alignment
+                expected_last_date = cls.get_latest_trading_date()
+                if df.iloc[-1]["date"] == expected_last_date and abs(df.iloc[-1]["close"] - quote["current_price"]) < 0.01:
+                    df.at[df.index[-1], "close"] = quote["current_price"]
+                    df.at[df.index[-1], "pct_chg"] = quote["pct_chg_num"]
 
         # Calculate comprehensive technical metrics (MA5~250, MACD, KDJ, RSI, BOLL, Volume MA)
         df = cls._calculate_indicators(df)
@@ -512,7 +593,7 @@ class MarketDataService:
         """Batch sync 1-year historical K-lines for all watchlists & positions into SQLite database concurrently"""
         t0 = time.time()
         watchlists = db.query(Watchlist).all()
-        positions = db.query(Position).all()
+        positions = db.query(Position).filter(Position.current_volume > 0).all()
         
         all_symbols = sorted(list(set([w.symbol for w in watchlists] + [p.symbol for p in positions])))
         if not all_symbols:
@@ -584,47 +665,127 @@ class MarketDataService:
         }
 
     @classmethod
-    def get_stock_kline(cls, symbol: str, days: int = 60, db: Optional[Session] = None) -> pd.DataFrame:
+    def resample_klines_to_period(cls, df: pd.DataFrame, period: str = "week") -> pd.DataFrame:
         """
-        Fetch stock/ETF daily K-line.
+        Resample daily K-line DataFrame into Weekly ('week' / 'W') or Monthly ('month' / 'M') DataFrame.
+        Re-computes MA5, MA10, MA20, MACD, and KDJ on the resampled timeframe.
+        """
+        if df.empty or len(df) < 2:
+            return df
+
+        try:
+            df_copy = df.copy()
+            df_copy["date_dt"] = pd.to_datetime(df_copy["date"])
+            df_copy = df_copy.sort_values("date_dt").set_index("date_dt")
+
+            norm_period = period.lower().strip()
+            if norm_period in ["week", "w", "weekly"]:
+                freq_rule = "W-FRI"
+            elif norm_period in ["month", "m", "monthly"]:
+                try:
+                    pd.Series(index=pd.date_range("2024-01-01", periods=2)).resample("ME").mean()
+                    freq_rule = "ME"
+                except Exception:
+                    freq_rule = "M"
+            else:
+                return df
+
+            resampled = df_copy.resample(freq_rule).agg({
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum",
+                "amount": "sum"
+            }).dropna(subset=["close"]).reset_index()
+
+            if resampled.empty:
+                return pd.DataFrame()
+
+            resampled["date"] = resampled["date_dt"].dt.strftime("%Y-%m-%d")
+            resampled.drop(columns=["date_dt"], inplace=True)
+
+            symbol = df["symbol"].iloc[0] if "symbol" in df.columns else ""
+            resampled["symbol"] = symbol
+
+            resampled["pct_chg"] = resampled["close"].pct_change().fillna(0.0).mul(100).round(2)
+            resampled["turnover"] = 0.0
+
+            # Calculate full technical indicators on this resampled timeframe
+            resampled = cls._calculate_indicators(resampled)
+            return resampled
+        except Exception as e:
+            logger.error(f"Error resampling kline to {period}: {e}")
+            return df
+
+    @classmethod
+    def get_stock_kline(cls, symbol: str, days: int = 60, db: Optional[Session] = None, period: str = "day") -> pd.DataFrame:
+        """
+        Fetch stock/ETF K-line with multi-timeframe support ('day', 'week', 'month').
         Local Database First: checks SQLite 'stock_klines' table; if missing or stale,
         fetches remote data, writes to database, and returns calculated indicators.
         """
         symbol = cls.format_symbol(symbol)
+        period_norm = (period or "day").lower().strip()
         
-        # 1. Try local database if Session provided
+        # 1. Try local database if Session provided, or auto-create short-lived SessionLocal
+        df_daily = pd.DataFrame()
+        expected_trade_date = cls.get_latest_trading_date()
         if db is not None:
             try:
                 db_records = db.query(StockKline).filter(
                     StockKline.symbol == symbol
                 ).order_by(StockKline.date.asc()).all()
 
-                if len(db_records) >= min(days, 30):
-                    # Convert to DataFrame
-                    records = []
-                    for r in db_records:
-                        records.append({
-                            "date": r.date, "symbol": r.symbol, "open": r.open, "close": r.close,
-                            "high": r.high, "low": r.low, "volume": r.volume, "amount": r.amount,
-                            "pct_chg": r.pct_chg, "turnover": r.turnover, "ma5": r.ma5, "ma10": r.ma10,
-                            "ma20": r.ma20, "ma60": r.ma60, "ma120": r.ma120, "ma250": r.ma250,
-                            "macd_dif": r.macd_dif, "macd_dea": r.macd_dea, "macd_hist": r.macd_hist,
-                            "kdj_k": r.kdj_k, "kdj_d": r.kdj_d, "kdj_j": r.kdj_j,
-                            "rsi6": r.rsi6, "rsi12": r.rsi12, "rsi24": r.rsi24,
-                            "boll_up": r.boll_up, "boll_mid": r.boll_mid, "boll_down": r.boll_down,
-                            "vol_ratio": r.vol_ratio
-                        })
-                    df = pd.DataFrame(records)
-                    return df.tail(days).reset_index(drop=True).replace({np.nan: None})
+                if len(db_records) >= 20:
+                    latest_record_date = db_records[-1].date
+                    # Check if local records contain the latest expected trading date
+                    # Also check if turnover is not entirely 0.0 for all records (legacy corrupt data)
+                    has_real_turnover = any((r.turnover or 0.0) > 0.0 for r in db_records[-5:])
+                    if latest_record_date >= expected_trade_date and has_real_turnover:
+                        records = []
+                        for r in db_records:
+                            records.append({
+                                "date": r.date, "symbol": r.symbol, "open": r.open, "close": r.close,
+                                "high": r.high, "low": r.low, "volume": r.volume, "amount": r.amount,
+                                "pct_chg": r.pct_chg, "turnover": r.turnover, "ma5": r.ma5, "ma10": r.ma10,
+                                "ma20": r.ma20, "ma60": r.ma60, "ma120": r.ma120, "ma250": r.ma250,
+                                "macd_dif": r.macd_dif, "macd_dea": r.macd_dea, "macd_hist": r.macd_hist,
+                                "kdj_k": r.kdj_k, "kdj_d": r.kdj_d, "kdj_j": r.kdj_j,
+                                "rsi6": r.rsi6, "rsi12": r.rsi12, "rsi24": r.rsi24,
+                                "boll_up": r.boll_up, "boll_mid": r.boll_mid, "boll_down": r.boll_down,
+                                "vol_ratio": r.vol_ratio
+                            })
+                        df_daily = pd.DataFrame(records)
+                    else:
+                        logger.info(f"Local K-lines for {symbol} are stale/missing turnover (latest: {latest_record_date}, expected: {expected_trade_date}), refreshing from remote...")
             except Exception as e:
                 logger.warning(f"Failed to read kline from DB for {symbol}: {e}")
+        else:
+            try:
+                with SessionLocal() as session:
+                    return cls.get_stock_kline(symbol, days=days, db=session, period=period)
+            except Exception:
+                pass
 
-        # 2. Fetch remote and sync to DB
-        df = cls._fetch_remote_kline(symbol, days=max(days, 365))
-        if db is not None and not df.empty:
-            cls.sync_stock_klines_to_db(db, symbol, days=365)
+        # 2. Fetch remote and sync to DB if local DB is empty or stale
+        if df_daily.empty:
+            df_daily = cls._fetch_remote_kline(symbol, days=max(days, 365))
+            if db is not None and not df_daily.empty:
+                cls.sync_stock_klines_to_db(db, symbol, days=365)
 
-        return df.tail(days).reset_index(drop=True).replace({np.nan: None})
+        if df_daily.empty:
+            return pd.DataFrame()
+
+        # Multi-timeframe dispatch
+        if period_norm in ["week", "w", "weekly"]:
+            resampled = cls.resample_klines_to_period(df_daily, period="week")
+            return resampled.tail(min(len(resampled), days)).reset_index(drop=True).replace({np.nan: None})
+        elif period_norm in ["month", "m", "monthly"]:
+            resampled = cls.resample_klines_to_period(df_daily, period="month")
+            return resampled.tail(min(len(resampled), days)).reset_index(drop=True).replace({np.nan: None})
+
+        return df_daily.tail(days).reset_index(drop=True).replace({np.nan: None})
 
     @classmethod
     def get_stock_indicators_summary(cls, symbol: str, name: str = "", db: Optional[Session] = None) -> Dict[str, Any]:
@@ -649,8 +810,18 @@ class MarketDataService:
         latest = df.iloc[-1]
         prev = df.iloc[-2] if len(df) > 1 else latest
 
-        real_price = quote["current_price"] if quote["current_price"] > 0 else round(float(latest["close"]), 2)
-        real_pct_chg = quote["pct_chg"] if quote["current_price"] > 0 else f"{round(float(latest.get('pct_chg', 0)), 2)}%"
+        now = bj_now()
+        is_trading_time = (now.weekday() < 5) and (
+            (now.hour == 9 and now.minute >= 30) or (10 <= now.hour <= 14) or (now.hour == 15 and now.minute <= 5)
+        )
+        if not is_trading_time and len(df) > 0:
+            # Post-market or Weekend: latest bar close & pct_chg are the definitive final trading figures
+            real_price = round(float(latest["close"]), 2)
+            pct_num = float(latest.get("pct_chg", 0.0))
+            real_pct_chg = f"{pct_num:+.2f}%"
+        else:
+            real_price = quote["current_price"] if quote["current_price"] > 0 else round(float(latest["close"]), 2)
+            real_pct_chg = quote["pct_chg"] if quote["current_price"] > 0 else f"{round(float(latest.get('pct_chg', 0)), 2)}%"
         real_name = quote["name"] if (quote.get("name") and not quote["name"].startswith("股票")) else (name or cls.get_stock_name(symbol))
 
         # 1-Year Range & Price Percentile
@@ -794,9 +965,90 @@ class MarketDataService:
 
         kline_pattern_summary = "；".join(pattern_synthesis) if pattern_synthesis else "沿短期均线波段运行"
 
+        # Asset Type & Strategy Tier Suitability Assessment
+        is_etf = (
+            symbol.startswith(("51", "159", "56", "58", "15", "16"))
+            or any(kw in real_name.upper() for kw in ["ETF", "基金", "LOF", "指数", "联接"])
+        )
+        asset_type = "ETF/指数基金" if is_etf else "A股股票"
+
+        strategy_suitabilities = []
+        if is_etf:
+            if any(kw in real_name for kw in ["300", "500", "A500", "50", "红利", "低波", "价值", "标普", "纳指"]) or price_percentile_1y <= 40.0:
+                strategy_suitabilities.append("长线价值与ETF动态网格定投")
+            if "多头排列" in ma_trend or vol_ratio >= 1.15:
+                strategy_suitabilities.append("中线景气行业ETF趋势轮动")
+            if not strategy_suitabilities:
+                strategy_suitabilities.append("长线/中线ETF配置")
+        else:
+            if vol_ratio >= 1.3 or any(abs(float(k["pct_chg"].replace("%", ""))) >= 3.8 for k in recent_klines[-3:]):
+                strategy_suitabilities.append("短线交易 (主力主线博弈/分歧低吸/放量突破)")
+            if "多头排列" in ma_trend or (real_price >= ma20 and (not ma120 or real_price >= ma120 * 0.95)):
+                strategy_suitabilities.append("中线波段 (顺势趋势推进/回踩MA20支撑)")
+            if price_percentile_1y <= 35.0 or (ma250 and real_price <= ma250 * 0.9):
+                strategy_suitabilities.append("长线价值 (历史低估安全边际/左侧分批建仓)")
+            if not strategy_suitabilities:
+                strategy_suitabilities.append("中短线灵活跟踪")
+
+        # Multi-timeframe Weekly & Monthly Resample Context
+        df_weekly = cls.resample_klines_to_period(df, period="week")
+        df_monthly = cls.resample_klines_to_period(df, period="month")
+
+        weekly_context = {}
+        if not df_weekly.empty:
+            w_latest = df_weekly.iloc[-1]
+            w_close = round(float(w_latest["close"]), 2)
+            w_ma5 = round(float(w_latest.get("ma5") or w_close), 2)
+            w_ma10 = round(float(w_latest.get("ma10") or w_close), 2)
+            w_ma20 = round(float(w_latest.get("ma20") or w_close), 2)  # Weekly MA20 Mid-term Life Line!
+            w_above_ma20 = bool(w_close >= w_ma20)
+            w_trend = "周线多头排列 (中线生命线健康上行)" if w_ma5 > w_ma10 > w_ma20 else ("周线空头向下 (中线走弱破位)" if w_ma5 < w_ma10 < w_ma20 else "周线震荡蓄势整理")
+            w_macd_hist = round(float(w_latest.get("macd_hist") or 0.0), 3)
+            w_macd_status = "周线MACD零轴上方多头红柱扩张" if w_macd_hist > 0 else "周线MACD绿柱或零轴下方调整"
+
+            recent_4_weeks = []
+            for _, r in df_weekly.tail(4).iterrows():
+                recent_4_weeks.append({
+                    "week_end": str(r["date"]),
+                    "close": round(float(r["close"]), 2),
+                    "pct_chg": f"{float(r.get('pct_chg', 0.0)):+.2f}%"
+                })
+
+            weekly_context = {
+                "weekly_close": w_close,
+                "weekly_ma5": w_ma5,
+                "weekly_ma10": w_ma10,
+                "weekly_ma20_lifeline": w_ma20,
+                "above_weekly_ma20": w_above_ma20,
+                "weekly_trend": w_trend,
+                "weekly_macd_status": w_macd_status,
+                "recent_4_weeks": recent_4_weeks
+            }
+
+        monthly_context = {}
+        if not df_monthly.empty:
+            m_latest = df_monthly.iloc[-1]
+            m_close = round(float(m_latest["close"]), 2)
+            m_ma5 = round(float(m_latest.get("ma5") or m_close), 2)
+            m_ma10 = round(float(m_latest.get("ma10") or m_close), 2)
+            m_trend = "月线大级别顺势多头" if m_ma5 >= m_ma10 else "月线大级别低位整理/筑底"
+            monthly_context = {
+                "monthly_close": m_close,
+                "monthly_ma5": m_ma5,
+                "monthly_ma10": m_ma10,
+                "monthly_trend": m_trend,
+                "historical_1y_percentile": f"{price_percentile_1y}%"
+            }
+
         return {
             "symbol": symbol,
             "name": real_name,
+            "asset_type": asset_type,
+            "is_etf": is_etf,
+            "strategy_suitability": strategy_suitabilities,
+            # Multi-timeframe context
+            "weekly_context": weekly_context,
+            "monthly_context": monthly_context,
             "date": str(latest["date"]),
             "current_price": real_price,
             "pct_chg": real_pct_chg,
@@ -846,24 +1098,30 @@ class MarketDataService:
 
     @classmethod
     def _generate_mock_kline(cls, symbol: str, days: int = 60) -> pd.DataFrame:
-        """Generate realistic mock stock price data if network/API is offline"""
+        """Generate realistic mock stock price data skipping weekends if network/API is offline"""
         quote = cls.get_realtime_quote(symbol)
         np.random.seed(int(symbol) if symbol.isdigit() else 600519)
         
         base_price = quote["current_price"] if quote["current_price"] > 0 else (100.0 + (int(symbol) % 200) if symbol.isdigit() else 1600.0)
         
-        dates = [
-            (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y-%m-%d")
-            for i in range(days, 0, -1)
-        ]
-        
+        # Collect valid trading days only (Monday to Friday), ending at latest trading date
+        latest_trade_str = cls.get_latest_trading_date()
+        latest_dt = datetime.datetime.strptime(latest_trade_str, "%Y-%m-%d").date()
+        valid_dates = []
+        cur = latest_dt
+        while len(valid_dates) < days:
+            if cur.weekday() < 5:
+                valid_dates.append(cur.strftime("%Y-%m-%d"))
+            cur -= datetime.timedelta(days=1)
+        valid_dates.reverse()
+
         prices = [base_price]
-        for _ in range(days - 1):
+        for _ in range(len(valid_dates) - 1):
             change = np.random.normal(0.001, 0.02)
             prices.append(prices[-1] * (1 + change))
             
         records = []
-        for i, date in enumerate(dates):
+        for i, date in enumerate(valid_dates):
             close = prices[i]
             open_p = close * (1 + np.random.uniform(-0.01, 0.01))
             high = max(open_p, close) * (1 + np.random.uniform(0, 0.015))
@@ -997,7 +1255,7 @@ class MarketDataService:
 
     @classmethod
     def format_macro_prompt_block(cls, context: Dict[str, Any]) -> str:
-        """Format market macro overview into clear Markdown block for LLM Prompts"""
+        """Format market macro overview into clear Markdown block for LLM Prompts with session context"""
         indices_list = context.get("indices", [])
         sectors_list = context.get("hot_sectors", [])
         news_list = context.get("latest_news", [])
@@ -1007,14 +1265,23 @@ class MarketDataService:
         news_str = "\n".join([f"- {n}" for n in news_list[:5]])
         meta = context.get("meta", {})
         fallback_sections = meta.get("fallback_sections", [])
+
+        now = bj_now()
+        is_weekend = now.weekday() >= 5
+        last_trade_date = cls.get_latest_trading_date()
+        if is_weekend:
+            market_session_note = f"> 📅 **市场时点说明**：当前为周末休市状态。大盘主要指数与个股技术指标均为最近一个有效交易日（**{last_trade_date}**）终盘收盘对账快照，宏观财经快讯为实时动态更新，属于正常口径一致数据。\n"
+        else:
+            market_session_note = f"> 📅 **市场时点说明**：基准交易日为 **{last_trade_date}**，数据时间：{meta.get('updated_at', cls._now_text())}。\n"
+
         data_quality_note = (
             f"\n> ⚠️ 数据质量提示：{ '、'.join(fallback_sections) }暂不可用，相关内容为演示回退数据；不得据此给出买卖、仓位或价格建议。\n"
-            if fallback_sections else "\n> 数据时间：" + str(meta.get("updated_at", "未知")) + "。\n"
+            if fallback_sections else ""
         )
 
         block = f"""## 🌐 【全市场大盘情绪、领涨热点板块与宏观新闻背景】
-
-### 📊 1. 今日大盘主要指数表现：
+{market_session_note}
+### 📊 1. 大盘主要指数表现 (基准交易日: {last_trade_date})：
 {indices_str}
 
 ### 🔥 2. 当前主力资金领涨与最热板块：

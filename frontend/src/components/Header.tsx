@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { TrendingUp, Cpu, Settings, RefreshCw, BarChart2, Brain, Search, Palette, Check } from 'lucide-react';
+import { TrendingUp, Cpu, Settings, RefreshCw, BarChart2, Brain, Search, Palette, Check, Bell } from 'lucide-react';
 import { LLMConfigItem, ThemeId, ThemeOption } from '../types';
 
 interface HeaderProps {
@@ -12,6 +12,8 @@ interface HeaderProps {
   onOpenSearch?: () => void;
   currentTheme?: ThemeId;
   onThemeChange?: (theme: ThemeId) => void;
+  unreadAlertCount?: number;
+  onOpenAlerts?: () => void;
 }
 
 const THEME_OPTIONS: ThemeOption[] = [
@@ -82,7 +84,9 @@ export const Header: React.FC<HeaderProps> = ({
   isRefreshing,
   onOpenSearch,
   currentTheme = 'indigo',
-  onThemeChange
+  onThemeChange,
+  unreadAlertCount = 0,
+  onOpenAlerts
 }) => {
   const [isThemeOpen, setIsThemeOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement>(null);
@@ -251,6 +255,24 @@ export const Header: React.FC<HeaderProps> = ({
             title="刷新行情与账户最新数据"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-indigo-400' : ''}`} />
+          </button>
+
+          {/* Alert Notification Bell */}
+          <button
+            onClick={onOpenAlerts}
+            className={`p-2 rounded-xl border transition-all relative ${
+              unreadAlertCount > 0
+                ? 'bg-red-950/80 text-red-300 border-red-700/60 shadow-lg shadow-red-950/50 hover:bg-red-900'
+                : 'text-slate-400 hover:text-slate-200 bg-slate-900/90 hover:bg-slate-800 border-slate-800'
+            }`}
+            title={unreadAlertCount > 0 ? `有 ${unreadAlertCount} 条未读止损止盈预警！点击查看` : '风控预警消息通知'}
+          >
+            <Bell className="w-4 h-4" />
+            {unreadAlertCount > 0 && (
+              <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold font-mono text-white shadow-md animate-pulse">
+                {unreadAlertCount}
+              </span>
+            )}
           </button>
 
           {/* Model Status Badge */}

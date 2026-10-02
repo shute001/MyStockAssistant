@@ -53,41 +53,121 @@ async def analyze_portfolio_stream(req: Optional[PortfolioAnalyzeRequest] = None
         watchlists = []
         scope_label = "全仓与全部自选"
 
+        def is_valid_symbol(s: str) -> bool:
+            s_str = str(s).strip()
+            return bool(s_str and len(s_str) == 6 and s_str.isdigit() and s_str != "830000")
+
         if scope == "ALL":
-            positions = db.query(Position).all()
-            watchlists = db.query(Watchlist).all()
+            raw_positions = db.query(Position).filter(Position.current_volume > 0).all()
+            raw_watchlists = db.query(Watchlist).all()
             scope_label = "全仓与全部自选"
         elif scope == "POSITIONS_ONLY":
-            positions = db.query(Position).all()
+            raw_positions = db.query(Position).filter(Position.current_volume > 0).all()
+            raw_watchlists = []
             scope_label = "我的持仓股专项"
+        elif scope == "HORIZON:SHORT":
+            raw_positions = db.query(Position).filter(
+                Position.current_volume > 0,
+                (Position.strategy_tag.like("%短%") | Position.strategy_tag.like("%高吸%") | Position.strategy_tag.like("%博弈%"))
+            ).all()
+            raw_watchlists = db.query(Watchlist).filter(
+                Watchlist.category.like("%短%") | Watchlist.category.like("%龙头%") | Watchlist.category.like("%突破%")
+            ).all()
+            scope_label = "⚡ 短线博弈专项诊断"
+        elif scope == "HORIZON:MID":
+            raw_positions = db.query(Position).filter(
+                Position.current_volume > 0,
+                (Position.strategy_tag.like("%中%") | Position.strategy_tag.like("%波段%") | Position.strategy_tag.like("%趋势%"))
+            ).all()
+            raw_watchlists = db.query(Watchlist).filter(
+                Watchlist.category.like("%中%") | Watchlist.category.like("%波段%") | Watchlist.category.like("%趋势%")
+            ).all()
+            scope_label = "📈 中线波段趋势专项诊断"
+        elif scope == "HORIZON:LONG":
+            raw_positions = db.query(Position).filter(
+                Position.current_volume > 0,
+                (Position.strategy_tag.like("%长%") | Position.strategy_tag.like("%定投%") | Position.strategy_tag.like("%价值%") | Position.strategy_tag.like("%底仓%"))
+            ).all()
+            raw_watchlists = db.query(Watchlist).filter(
+                Watchlist.category.like("%长%") | Watchlist.category.like("%定投%") | Watchlist.category.like("%红利%") | Watchlist.category.like("%ETF%")
+            ).all()
+            scope_label = "🌱 长线定投与价值专项诊断"
         elif scope.startswith("CATEGORY:"):
+            raw_positions = []
             cat_name = scope.split("CATEGORY:", 1)[1]
-            watchlists = db.query(Watchlist).filter(Watchlist.category == cat_name).all()
+            raw_watchlists = db.query(Watchlist).filter(Watchlist.category == cat_name).all()
             scope_label = f"【{cat_name}】板块专项"
         else:
-            positions = db.query(Position).all()
-            watchlists = db.query(Watchlist).all()
+            raw_positions = db.query(Position).filter(Position.current_volume > 0).all()
+            raw_watchlists = db.query(Watchlist).all()
+            scope_label = "全仓与全部自选"
+
+        # 1. Filter valid positions and unique by symbol
+        seen_pos = set()
+        positions = []
+        for p in raw_positions:
+            if is_valid_symbol(p.symbol) and p.symbol not in seen_pos:
+                seen_pos.add(p.symbol)
+                positions.append(p)
+        pos_symbols = {p.symbol for p in positions}
+
+        # 2. Filter valid watchlists, deduplicate by symbol, and exclude positions in ALL scope
+        seen_watch = set()
+        watchlists = []
+        for w in raw_watchlists:
+            if not is_valid_symbol(w.symbol):
+                continue
+            if scope == "ALL" and w.symbol in pos_symbols:
+                # Exclude already-held positions from watchlist to prevent redundant duplicate diagnosis
+                continue
+            if w.symbol not in seen_watch:
+                seen_watch.add(w.symbol)
+                watchlists.append(w)
 
         portfolio_payload = []
         for pos in positions:
             stock = db.query(Stock).filter(Stock.symbol == pos.symbol).first()
             name = stock.name if stock else pos.symbol
-            indicators = MarketDataService.get_stock_indicators_summary(pos.symbol, name)
+            indicators = MarketDataService.get_stock_indicators_summary(pos.symbol, name, db=db)
             indicators["cost_price"] = pos.cost_price
             indicators["current_volume"] = pos.current_volume
+            curr_p = indicators.get("current_price") or pos.cost_price or 0.0
+            val = round(curr_p * pos.current_volume, 2)
+            cost_val = round((pos.cost_price or 0.0) * pos.current_volume, 2)
+            indicators["market_value"] = val
+            indicators["profit_loss"] = round(val - cost_val, 2)
+            indicators["profit_ratio"] = f"{round(((curr_p - pos.cost_price)/pos.cost_price * 100), 2)}%" if pos.cost_price else "0.00%"
+            indicators["strategy_tag"] = pos.strategy_tag or "持仓"
             portfolio_payload.append(indicators)
 
         watchlist_payload = []
         for w in watchlists:
             stock = db.query(Stock).filter(Stock.symbol == w.symbol).first()
             name = stock.name if stock else w.symbol
-            indicators = MarketDataService.get_stock_indicators_summary(w.symbol, name)
+            indicators = MarketDataService.get_stock_indicators_summary(w.symbol, name, db=db)
             indicators["category"] = w.category
             indicators["target_buy_price"] = w.target_buy_price
             watchlist_payload.append(indicators)
 
         prompt = MultiLLMEngine.build_portfolio_prompt(portfolio_payload, watchlist_payload, scope_label=scope_label, macro_context=macro_context)
-        item_count_label = f"{len(portfolio_payload)}持仓, {len(watchlist_payload)}自选/板块"
+        if scope == "POSITIONS_ONLY":
+            item_count_label = f"{len(portfolio_payload)}只持仓股专项"
+            if len(portfolio_payload) == 0:
+                async def empty_positions_generator():
+                    msg = "> 💡 **持仓提示**：您当前账户中暂无活跃持仓股票（持仓股数均为 0 或已全部清仓）。\n\n请先在【持仓管理】中录入您的买入持仓，或通过【交易记录】同步交易后，再发起持仓股专项深度量化诊断。"
+                    yield msg
+                return StreamingResponse(empty_positions_generator(), media_type="text/event-stream")
+        elif scope.startswith("HORIZON:"):
+            item_count_label = f"{len(portfolio_payload)}持仓, {len(watchlist_payload)}自选"
+            if len(portfolio_payload) == 0 and len(watchlist_payload) == 0:
+                async def empty_horizon_generator():
+                    msg = f"> 💡 **投资周期提示**：当前在【{scope_label}】下未检索到被标记为对应周期策略的标的。\n\n建议前往【持仓管理】为持仓标的设定【投资周期标签】（如⚡短线博弈、📈中线波段、🌱长线定投），或在自选股中归类后再发起专项诊断。"
+                    yield msg
+                return StreamingResponse(empty_horizon_generator(), media_type="text/event-stream")
+        elif scope.startswith("CATEGORY:"):
+            item_count_label = f"{len(watchlist_payload)}只板块自选标的"
+        else:
+            item_count_label = f"{len(portfolio_payload)}持仓, {len(watchlist_payload)}自选"
 
     async def event_generator():
         fallback_sections = macro_context.get("meta", {}).get("fallback_sections", [])
@@ -287,7 +367,7 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
     account_fund_info = get_account_fund_summary(db)
 
     # 2. Fetch user current positions with real-time quotes & market data
-    positions = db.query(Position).all()
+    positions = db.query(Position).filter(Position.current_volume > 0).all()
     pos_symbols = [p.symbol for p in positions]
     quotes_map = MarketDataService.get_batch_realtime_quotes(pos_symbols) if pos_symbols else {}
     
@@ -402,6 +482,45 @@ async def chat_with_agent_stream(payload: AgentChatPayload, db: Session = Depend
 当用户要求你“推送到微信”、“发送到微信”、“把总结/分析发到微信”、“微信推送”等请求时，你必须**非常自信地回答**：
 “好的！我已将本次的操盘分析与策略总结实时发送至您的微信，请在手机微信中查收！”，并在回答第一行包含标识 `[WECHAT_PUSH_REQUESTED]`，随后随附整理好的【微信精简版复盘/策略卡片】。
 
+4. **持仓股票止损止盈智能设单能力 (自动监控、微信/弹窗强提醒)**：
+你具备直接帮助用户为持仓股票配置【止损止盈多维监控规则】的强大能力！支持目标价止损/止盈、跌破/突破指定均线(MA5/10/20/60)、MACD死叉/金叉、以及移动最高价回撤止盈。
+当用户询问：“帮我分析xx并设置止损止盈”、“帮我设个条件”、“给持仓股设置风控”、“止损位多少如何设条件”或类似意图时，你除了在正文中给出详尽的技术面推导逻辑（支撑位、阻力位、均线与动能）外，**必须在回复末尾附带如下标准 JSON 格式的代码块（代码块语言标识必须严格为 condition_proposal）**：
+
+```condition_proposal
+{{
+  "symbol": "600519",
+  "name": "贵州茅台",
+  "conditions": [
+    {{
+      "condition_type": "STOP_LOSS",
+      "condition_label": "🛑 关键支撑止损",
+      "target_value": 1620.0,
+      "strategy_note": "跌破关键支撑位1620元严格止损防守"
+    }},
+    {{
+      "condition_type": "MA_CROSS_BELOW",
+      "condition_label": "📉 跌破20日生命线止损",
+      "ma_period": 20,
+      "strategy_note": "跌破20日均线趋势走坏减仓离场"
+    }},
+    {{
+      "condition_type": "TARGET_PROFIT",
+      "condition_label": "🎯 第一阻力位止盈",
+      "target_value": 1780.0,
+      "strategy_note": "达到前期筹码套牢密集区1780元分批锁定利润"
+    }},
+    {{
+      "condition_type": "TRAILING_STOP",
+      "condition_label": "🛡️ 移动止盈 (回撤5%)",
+      "trail_percent": 5.0,
+      "strategy_note": "自冲高最高点回落达5%时锁定利润"
+    }}
+  ]
+}}
+```
+系统前端会自动将该块渲染为极具美感的【智能条件单推荐卡片】，用户点击即可“⚡ 一键应用到监控”，一旦触发系统将立即弹窗并推送到用户微信！
+
+
 {macro_block}
 {account_capital_prompt}
 {queried_stock_block}
@@ -463,7 +582,7 @@ async def review_trades_agent_stream(db: Session = Depends(get_db)):
         if stk_info and "error" not in stk_info:
             traded_stocks_indicators[sym] = stk_info
 
-    positions = db.query(Position).all()
+    positions = db.query(Position).filter(Position.current_volume > 0).all()
     pos_payload = []
     for p in positions:
         stock = db.query(Stock).filter(Stock.symbol == p.symbol).first()
@@ -665,44 +784,66 @@ async def extract_rules_from_text(payload: ExtractRulesRequest, db: Session = De
         "saved_memories": saved_mems
     }
 
-def auto_sync_screener_recommendations_to_watchlist(db: Session, report_text: str, candidate_items: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+def auto_sync_screener_recommendations_to_watchlist(db: Session, report_text: str, candidate_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Automatically parse recommended stocks from Screener AI report and sync into Watchlist under '🤖 AI 精选建仓' category
+    Automatically parse recommended stocks from Screener AI report and sync into Watchlist with specific tier categories:
+    - 🤖 AI 短线精选 (短线博弈/分歧低吸)
+    - 🤖 AI 中线波段 (中线顺势/均线生命线)
+    - 🤖 AI 长线/ETF (长线定投/ETF动态网格)
     """
-    category_name = "🤖 AI 精选建仓"
-    
-    # Extract Section 1 (精选标的推荐)
-    target_section = report_text
-    if "1. 顶尖战法" in report_text:
-        parts = report_text.split("1. 顶尖战法", 1)
-        if len(parts) > 1:
-            target_section = parts[1].split("2. 战法契合度", 1)[0]
+    # Detect tier header offsets in markdown report
+    short_pos = report_text.find("短线")
+    mid_pos = report_text.find("中线")
+    long_pos = report_text.find("长线")
+    if long_pos == -1:
+        long_pos = report_text.find("三、长线")
 
     added_items = []
-    
     for item in candidate_items:
         sym = item.get("symbol")
         name = item.get("name")
         if not sym:
             continue
-            
-        symbol_matched = bool(sym and sym in target_section)
-        name_matched = bool(name and len(name) >= 2 and name in target_section)
 
-        if symbol_matched or name_matched:
-            w = db.query(Watchlist).filter(Watchlist.symbol == sym).first()
-            if w:
-                w.category = category_name
-                w.remark = f"AI智能选股推选建仓标的 ({bj_now().strftime('%m-%d %H:%M')})"
-            else:
-                w = Watchlist(
-                    symbol=sym,
-                    category=category_name,
-                    remark=f"AI智能选股推选建仓标的 ({bj_now().strftime('%m-%d %H:%M')})"
-                )
-                db.add(w)
-            
-            added_items.append({"symbol": sym, "name": name or sym})
+        # Check where symbol or name appears in the report
+        pos_sym = report_text.find(sym)
+        pos_name = report_text.find(name) if (name and len(name) >= 2) else -1
+        valid_positions = [p for p in [pos_sym, pos_name] if p != -1]
+        if not valid_positions:
+            continue
+        first_pos = min(valid_positions)
+
+        # Determine target tier category
+        cat_tag = "🤖 AI 精选建仓"
+        sub_desc = "AI多维量化精选"
+        if short_pos != -1 and first_pos >= short_pos and (mid_pos == -1 or first_pos < mid_pos) and (long_pos == -1 or first_pos < long_pos):
+            cat_tag = "🤖 AI 短线精选"
+            sub_desc = "⚡ 短线交易"
+        elif mid_pos != -1 and first_pos >= mid_pos and (long_pos == -1 or first_pos < long_pos):
+            cat_tag = "🤖 AI 中线波段"
+            sub_desc = "📈 中线波段"
+        elif long_pos != -1 and first_pos >= long_pos:
+            cat_tag = "🤖 AI 长线/ETF"
+            sub_desc = "🛡️ 长线价值/ETF"
+
+        # Update or create Watchlist
+        w = db.query(Watchlist).filter(Watchlist.symbol == sym).first()
+        now_str = bj_now().strftime('%m-%d %H:%M')
+        if w:
+            existing_cats = [c.strip() for c in (w.category or "").split(",") if c.strip()]
+            if cat_tag not in existing_cats:
+                existing_cats.append(cat_tag)
+                w.category = ",".join(existing_cats)
+            w.remark = f"[{sub_desc}] AI智能选股推选标的 ({now_str})"
+        else:
+            w = Watchlist(
+                symbol=sym,
+                category=cat_tag,
+                remark=f"[{sub_desc}] AI智能选股推选标的 ({now_str})"
+            )
+            db.add(w)
+
+        added_items.append({"symbol": sym, "name": name or sym, "category": cat_tag, "tier": sub_desc})
 
     if added_items:
         db.commit()
@@ -711,13 +852,16 @@ def auto_sync_screener_recommendations_to_watchlist(db: Session, report_text: st
 
 
 @router.post("/screener/run-stream")
-async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
-    """Stream Stock & ETF Screener Agent recommendation report with parallel indicators fetching & real-time progress updates"""
+async def run_stock_screener_agent_stream(
+    scope: Optional[str] = Query("ALL", description="Screening scope: ALL | SHORT_TERM | MID_TERM | LONG_TERM_ETF"),
+    db: Session = Depends(get_db)
+):
+    """Stream Stock & ETF Screener Agent recommendation report with parallel indicators fetching & multi-tier taxonomy"""
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
 
     watchlists = db.query(Watchlist).all()
-    positions = db.query(Position).all()
+    positions = db.query(Position).filter(Position.current_volume > 0).all()
     all_stocks = {s.symbol: s.name for s in db.query(Stock).all()}
 
     symbols_map = {}
@@ -747,8 +891,16 @@ async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
     user_rules_text = AgentMemoryService.format_memories_for_prompt(db)
 
     async def event_generator():
+        scope_labels = {
+            "ALL": "全景三维严选 (短线 / 中线 / 长线与ETF)",
+            "SHORT_TERM": "⚡ 专注短线交易股票 (1~5日主线博弈与分歧低吸)",
+            "MID_TERM": "📈 专注中线波段标的 (2~8周顺势多头与行业ETF)",
+            "LONG_TERM_ETF": "🛡️ 专注长线价值与宽基/红利 ETF (数月~长期定投与网格)"
+        }
+        active_label = scope_labels.get(scope or "ALL", scope_labels["ALL"])
+
         # 1. Yield clean initial status banner to frontend
-        yield f"> 📡 **智能选股 Agent 已启动**：正在利用并发量化引擎扫描全量 **{total_candidates}** 只候选标的（自选/持仓/领涨主线龙头）的 1 年周期均线、近 10 日 K 线走势序列、量比、MACD/KDJ/RSI/BOLL 全维指标...\n\n"
+        yield f"> 📡 **智能选股 Agent 已启动【{active_label}】**：正在利用并发量化引擎扫描全量 **{total_candidates}** 只候选标的（自选/持仓/领涨主线龙头）的 1 年周期均线、近 10 日 K 线量价形态、量比与全维摆动指标...\n\n"
 
         if total_candidates == 0:
             yield "⚠️ **选股提示**: 当前候选池为空。请在【自选股/板块】中添加关注标的，智能选股 Agent 才能为您匹配战法推选！"
@@ -773,10 +925,9 @@ async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
                 loop.run_in_executor(executor, fetch_single, sym, cat)
                 for sym, cat in symbols_map.items()
             ]
-            # Gather all completed indicators without polluting markdown text
             watchlist_items = await asyncio.gather(*tasks)
 
-        yield f"> 🧠 **行情研判全量就绪**！正在对标【顶级战法库】与【全场大盘/热点风向】精选优质建仓标的...\n\n---\n\n"
+        yield f"> 🧠 **行情研判与资产画像全量就绪**！已标注 A 股股票与 ETF 基金属性，正在对标【短线/中线/长线与ETF多维买卖标准】生成精准建仓策略...\n\n---\n\n"
 
         from routers.account import get_account_fund_summary
         account_fund_info = get_account_fund_summary(db)
@@ -786,24 +937,25 @@ async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
             watchlist_items, 
             user_rules_text, 
             macro_context=macro_context,
-            account_fund_info=account_fund_info
+            account_fund_info=account_fund_info,
+            scope=scope
         )
 
         report_text = ""
         async for chunk in MultiLLMEngine.generate_analysis_stream(
             db, 
             prompt,
-            system_prompt="你是一位专业的 A 股量化选股专家与策略风控教练，严苛匹配筛选规则，重视操作纪律。"
+            system_prompt="你是一位专业的 A 股量化选股专家与策略风控教练，严苛匹配短线、中线、长线与 ETF 的差异化买卖标准，重视风控纪律。"
         ):
             if chunk:
                 report_text += chunk
                 yield chunk
 
-        # Auto sync recommended stocks into Watchlist under category "🤖 AI 精选建仓"
+        # Auto sync recommended stocks into Watchlist under specific AI categories
         synced_stocks = auto_sync_screener_recommendations_to_watchlist(db, report_text, watchlist_items)
         if synced_stocks:
-            stock_names_str = "、".join([f"**{s['name']} ({s['symbol']})**" for s in synced_stocks])
-            sync_notice = f"\n\n---\n\n> ✨ **自选板块自动打标与同步通知**：系统已自动将 AI 匹配精选的建仓标的 {stock_names_str} 添加/同步至自选板块【**🤖 AI 精选建仓**】中！您可随时在“持仓与自选管理”板块中集中监控其最新走势与买点！\n"
+            stock_names_str = "、".join([f"**{s['name']} ({s['symbol']})** [{s.get('tier', 'AI精选')}]" for s in synced_stocks])
+            sync_notice = f"\n\n---\n\n> ✨ **自选板块多级自动打标与同步完成**：系统已自动将 AI 匹配精选的标的 {stock_names_str} 分类同步至自选板块【**🤖 AI 短线精选 / 🤖 AI 中线波段 / 🤖 AI 长线/ETF**】！您可随时在“持仓与自选管理”中集中监控其最新走势与买卖点！\n"
             report_text += sync_notice
             yield sync_notice
 
@@ -812,7 +964,7 @@ async def run_stock_screener_agent_stream(db: Session = Depends(get_db)):
         report = AnalysisReport(
             report_type="STOCK_SCREENER_AGENT",
             provider_model=active_cfg["model"],
-            input_summary=f"智能选股 Agent ({len(watchlist_items)}只自选/持仓股筛选)",
+            input_summary=f"智能选股 Agent [{active_label}] ({len(watchlist_items)}只标的筛选)",
             content_md=report_text,
             generated_at=bj_now()
         )

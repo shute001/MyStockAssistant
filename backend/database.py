@@ -176,6 +176,47 @@ class StockKline(Base):
     )
 
 
+class PositionCondition(Base):
+    __tablename__ = "position_conditions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    condition_type = Column(String, nullable=False)  # TARGET_PROFIT, STOP_LOSS, MA_CROSS_BELOW, MA_CROSS_ABOVE, MACD_DEATH_CROSS, MACD_GOLDEN_CROSS, TRAILING_STOP
+    condition_label = Column(String, nullable=True)  # e.g., "跌破20日均线止损"
+    target_value = Column(Float, nullable=True)       # 目标价格或目标百分比
+    ma_period = Column(Integer, nullable=True)        # 5, 10, 20, 60, 120, 250
+    trail_percent = Column(Float, nullable=True)      # 移动回撤百分比
+    highest_price = Column(Float, nullable=True)      # 监控期间最高价
+    notify_wechat = Column(Boolean, default=True)
+    notify_popup = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True)
+    is_triggered = Column(Boolean, default=False)
+    triggered_at = Column(DateTime, nullable=True)
+    trigger_reason = Column(Text, nullable=True)
+    strategy_note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=bj_now)
+    updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
+
+
+class AlertNotification(Base):
+    __tablename__ = "alert_notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    condition_id = Column(Integer, nullable=True, index=True)
+    symbol = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    alert_type = Column(String, nullable=False)      # STOP_LOSS, TAKE_PROFIT, MA, MACD, TRAILING
+    title = Column(String, nullable=False)
+    message = Column(Text, nullable=False)
+    trigger_price = Column(Float, nullable=True)
+    cost_price = Column(Float, nullable=True)
+    profit_ratio = Column(Float, nullable=True)
+    is_read = Column(Boolean, default=False, index=True)
+    wechat_status = Column(String, default="PENDING") # SENT, FAILED, DISABLED
+    created_at = Column(DateTime, default=bj_now)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     # Ensure missing columns exist for SQLite schema backward compatibility

@@ -21,6 +21,7 @@ export interface PositionItem {
   macd_status: string;
   support_price?: number;
   resistance_price?: number;
+  condition_count?: number;
   quote_status?: 'live' | 'unavailable' | string;
   quote_updated_at?: string;
 }
@@ -143,4 +144,68 @@ export interface ThemeOption {
   badgeClass: string;
   desc: string;
 }
+
+export type ConditionType =
+  | 'TARGET_PROFIT'
+  | 'STOP_LOSS'
+  | 'MA_CROSS_BELOW'
+  | 'MA_CROSS_ABOVE'
+  | 'MACD_DEATH_CROSS'
+  | 'MACD_GOLDEN_CROSS'
+  | 'TRAILING_STOP';
+
+export interface PositionConditionItem {
+  id: number;
+  symbol: string;
+  name: string;
+  condition_type: ConditionType;
+  condition_label?: string;
+  target_value?: number;
+  ma_period?: number;
+  trail_percent?: number;
+  highest_price?: number;
+  notify_wechat: boolean;
+  notify_popup: boolean;
+  is_active: boolean;
+  is_triggered: boolean;
+  triggered_at?: string;
+  trigger_reason?: string;
+  strategy_note?: string;
+  created_at?: string;
+  current_price?: number;
+}
+
+export interface AlertNotificationItem {
+  id: number;
+  condition_id?: number;
+  symbol: string;
+  name: string;
+  alert_type: string;
+  title: string;
+  message: string;
+  trigger_price?: number;
+  cost_price?: number;
+  profit_ratio?: number;
+  is_read: boolean;
+  wechat_status?: string;
+  created_at?: string;
+}
+
+export interface SuggestedCondition {
+  condition_type: ConditionType;
+  condition_label: string;
+  target_value?: number;
+  ma_period?: number;
+  trail_percent?: number;
+  strategy_note: string;
+  notify_wechat: boolean;
+  notify_popup: boolean;
+}
+
+export interface AIConditionProposal {
+  symbol: string;
+  name: string;
+  conditions: SuggestedCondition[];
+}
+
 

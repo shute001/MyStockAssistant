@@ -1,7 +1,9 @@
 import React, { useState, useEffect, Suspense } from 'react';
 import axios from 'axios';
 import { Header } from './components/Header';
-import { PositionItem, WatchlistItem, LLMConfigItem, ThemeId } from './types';
+import { PositionItem, WatchlistItem, LLMConfigItem, ThemeId, AlertNotificationItem } from './types';
+import { GlobalAlertModal } from './components/GlobalAlertModal';
+import { AlertCenterModal } from './components/AlertCenterModal';
 
 const Dashboard = React.lazy(() => import('./components/Dashboard').then((module) => ({ default: module.Dashboard })));
 const PortfolioManager = React.lazy(() => import('./components/PortfolioManager').then((module) => ({ default: module.PortfolioManager })));
@@ -42,8 +44,69 @@ export const App: React.FC = () => {
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  // Real-time Stop-Loss & Take-Profit Unread Alerts & Alert Center
+  const [unreadAlerts, setUnreadAlerts] = useState<AlertNotificationItem[]>([]);
+  const [isAlertModalOpen, setIsAlertModalOpen] = useState<boolean>(false);
+  const [isAlertCenterOpen, setIsAlertCenterOpen] = useState<boolean>(false);
+
+  const fetchUnreadAlerts = async () => {
+    try {
+      const res = await axios.get('/api/v1/stocks/alerts/unread');
+      const newAlerts: AlertNotificationItem[] = res.data || [];
+      setUnreadAlerts((prev) => {
+        const prevIds = new Set(prev.map((a) => a.id));
+        const hasFresh = newAlerts.some((a) => !prevIds.has(a.id));
+        if (hasFresh && newAlerts.length > 0) {
+          setIsAlertModalOpen(true);
+        }
+        return newAlerts;
+      });
+    } catch (err) {
+      // ignore polling network errors
+    }
+  };
+
+  const handleMarkAlertsRead = async (alertIds?: number[]) => {
+    try {
+      await axios.post('/api/v1/stocks/alerts/mark-read', {
+        alert_ids: alertIds
+      });
+      fetchUnreadAlerts();
+    } catch (err) {
+      console.error('Failed to mark alerts as read:', err);
+    }
+  };
+
+  // Check if current time is within China A-share trading hours
+  const isTradingTime = (): boolean => {
+    const now = new Date();
+    const day = now.getDay();
+    if (day === 0 || day === 6) return false;
+    const time = now.getHours() * 100 + now.getMinutes();
+    return (time >= 915 && time <= 1135) || (time >= 1255 && time <= 1505);
+  };
+
   useEffect(() => {
     fetchAllData();
+    fetchUnreadAlerts();
+
+    // Only periodically poll for unread alerts during active A-share trading hours
+    const alertTimer = setInterval(() => {
+      if (isTradingTime()) {
+        fetchUnreadAlerts();
+      }
+    }, 15000);
+
+    // Refresh once when window/tab is focused
+    const handleFocus = () => {
+      fetchUnreadAlerts();
+    };
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(alertTimer);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   // Global Keyboard Shortcuts (Ctrl+K to Search, Esc to Close)
@@ -127,6 +190,8 @@ export const App: React.FC = () => {
         onOpenSearch={() => setIsSearchOpen(true)}
         currentTheme={theme}
         onThemeChange={setTheme}
+        unreadAlertCount={unreadAlerts.length}
+        onOpenAlerts={() => setIsAlertCenterOpen(true)}
       />
 
       {dataError && (
@@ -158,6 +223,7 @@ export const App: React.FC = () => {
             watchlists={watchlists}
             onRefresh={fetchAllData}
             onSelectStock={(symbol) => setSelectedStockSymbol(symbol)}
+            onOpenAlertCenter={() => setIsAlertCenterOpen(true)}
           />
         )}
 
@@ -258,6 +324,29 @@ export const App: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Global Real-time Stop-Loss & Take-Profit Alert Popup Modal */}
+      {isAlertModalOpen && unreadAlerts.length > 0 && (
+        <GlobalAlertModal
+          alerts={unreadAlerts}
+          onClose={() => setIsAlertModalOpen(false)}
+          onMarkRead={handleMarkAlertsRead}
+          onSelectStock={(symbol) => setSelectedStockSymbol(symbol)}
+          onOpenAlertCenter={() => {
+            setIsAlertModalOpen(false);
+            setIsAlertCenterOpen(true);
+          }}
+        />
+      )}
+
+      {/* Centralized Alert Notification Center Modal */}
+      {isAlertCenterOpen && (
+        <AlertCenterModal
+          onClose={() => setIsAlertCenterOpen(false)}
+          onSelectStock={(symbol) => setSelectedStockSymbol(symbol)}
+          onAlertsChanged={fetchUnreadAlerts}
+        />
       )}
       </Suspense>
     </div>

@@ -9,6 +9,7 @@ import {
   Send, Bot, User, CornerDownLeft, Award, Zap, BookOpen, Maximize2, Minimize2
 } from 'lucide-react';
 import { TradeRecordItem, AgentMemoryItem, MasterPlaybookItem, StrategyCategory } from '../types';
+import { AIConditionCard } from './AIConditionCard';
 
 const CATEGORY_MAP: Record<StrategyCategory, { label: string; badgeClass: string; icon: string }> = {
   SHORT_TERM: { label: '股票短线', badgeClass: 'bg-rose-950/80 text-rose-300 border-rose-800/40', icon: '⚡' },
@@ -250,6 +251,8 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   const [parsedItems, setParsedItems] = useState<any[]>([]);
 
   // Agent Streaming Review
+  type ScreenerScope = 'ALL' | 'SHORT_TERM' | 'MID_TERM' | 'LONG_TERM_ETF';
+  const [screenerScope, setScreenerScope] = useState<ScreenerScope>('ALL');
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isScreenerRunning, setIsScreenerRunning] = useState(false);
   const [agentReportMd, setAgentReportMd] = useState<string>('');
@@ -287,10 +290,11 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
 
 
-  // Handle Start Stock Screener Agent
-
-  const handleStartScreenerAgent = async () => {
+  // Handle Start Stock Screener Agent with multi-tier scope
+  const handleStartScreenerAgent = async (targetScope?: ScreenerScope) => {
     if (isScreenerRunning || isAgentRunning) return;
+    const scopeToUse = targetScope || screenerScope;
+    setScreenerScope(scopeToUse);
     setIsScreenerRunning(true);
     setAgentReportMd('');
     
@@ -300,7 +304,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
     }, 100);
 
     try {
-      const response = await fetch('/api/v1/ai/screener/run-stream', { method: 'POST' });
+      const response = await fetch(`/api/v1/ai/screener/run-stream?scope=${scopeToUse}`, { method: 'POST' });
       if (!response.body) throw new Error('ReadableStream not supported');
 
       const reader = response.body.getReader();
@@ -813,18 +817,35 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                 <span>{isAgentRunning ? '诊断生成中...' : '生成复盘报告'}</span>
               </button>
 
-              <button
-                onClick={handleStartScreenerAgent}
-                disabled={isScreenerRunning || isAgentRunning}
-                className={`px-3.5 py-2 rounded-xl text-xs font-semibold text-white shadow-md transition-all flex items-center space-x-1.5 ${
-                  isScreenerRunning 
-                    ? 'bg-emerald-800 opacity-80 cursor-not-allowed animate-pulse' 
-                    : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-600/25'
-                }`}
-              >
-                <Cpu className="w-3.5 h-3.5 text-emerald-200" />
-                <span>{isScreenerRunning ? '选股中...' : '智能选股 Agent'}</span>
-              </button>
+              {/* Screener Button with Strategy Scope Selector */}
+              <div className="flex items-center bg-slate-950/90 p-0.5 rounded-xl border border-slate-800 shadow-sm">
+                <select
+                  value={screenerScope}
+                  onChange={(e) => setScreenerScope(e.target.value as ScreenerScope)}
+                  disabled={isScreenerRunning || isAgentRunning}
+                  className="bg-transparent text-emerald-300 font-semibold text-[11px] px-2 py-1.5 rounded-lg border-none focus:outline-none cursor-pointer"
+                  title="选择智能筛选维度与买卖标准"
+                >
+                  <option value="ALL" className="bg-slate-900 text-slate-200">🌐 全景三维 (短/中/长线&ETF)</option>
+                  <option value="SHORT_TERM" className="bg-slate-900 text-emerald-400">⚡ 专注短线 (1~5日博弈/分歧低吸)</option>
+                  <option value="MID_TERM" className="bg-slate-900 text-sky-400">📈 专注中线 (顺势趋势/行业ETF)</option>
+                  <option value="LONG_TERM_ETF" className="bg-slate-900 text-amber-400">🛡️ 专注长线/ETF (估值低位/网格)</option>
+                </select>
+
+                <button
+                  onClick={() => handleStartScreenerAgent()}
+                  disabled={isScreenerRunning || isAgentRunning}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold text-white shadow transition-all flex items-center space-x-1.5 ${
+                    isScreenerRunning 
+                      ? 'bg-emerald-800 opacity-80 cursor-not-allowed animate-pulse' 
+                      : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-600/25'
+                  }`}
+                  title="启动智能选股 Agent，多维量化筛选"
+                >
+                  <Cpu className="w-3.5 h-3.5 text-emerald-200" />
+                  <span>{isScreenerRunning ? '分级推选中...' : '智能选股 Agent'}</span>
+                </button>
+              </div>
 
               <button
                 onClick={() => setIsChatModalOpen(true)}
@@ -1463,40 +1484,58 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
       <div ref={reportRef} className="scroll-mt-6">
         {(agentReportMd || isAgentRunning || isScreenerRunning) && (
           <div className="bg-slate-900 border border-purple-900/50 rounded-2xl p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
-                {isScreenerRunning || agentReportMd.includes('智能选股') || agentReportMd.includes('Screener') ? (
-                  <>
-                    <Cpu className="w-5 h-5 text-emerald-400" />
-                    <span>🎯 Stock & ETF Screener Agent 智能选股推荐报告</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-5 h-5 text-amber-400" />
-                    <span>🤖 Trade Review Agent 诊断与反思报告</span>
-                  </>
-                )}
-              </h3>
-              <div className="flex items-center gap-2">
-                {agentReportMd && !isAgentRunning && !isScreenerRunning && (
-                  <button
-                    onClick={() => handlePushToWeChat()}
-                    disabled={isPushingWeChat}
-
-                    className="px-3 py-1.5 bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-md"
-                  >
-                    <Send className={`w-3.5 h-3.5 ${isPushingWeChat ? 'animate-pulse' : ''}`} />
-                    <span>{isPushingWeChat ? '发送中...' : '📱 发送至微信'}</span>
-                  </button>
-                )}
-                {(isAgentRunning || isScreenerRunning) && (
-                  <span className="text-xs text-purple-300 flex items-center gap-2 font-mono">
-                    <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
-                    {isScreenerRunning ? '智能选股 Agent 多维指标匹配中...' : 'Agent 结合记忆思考进化中...'}
-                  </span>
-                )}
+            <div className="border-b border-slate-800 pb-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
+                  {isScreenerRunning || agentReportMd.includes('智能选股') || agentReportMd.includes('Screener') || agentReportMd.includes('分级选股') ? (
+                    <>
+                      <Cpu className="w-5 h-5 text-emerald-400" />
+                      <span>🎯 Stock & ETF Screener Agent 多周期分级选股报告</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-5 h-5 text-amber-400" />
+                      <span>🤖 Trade Review Agent 诊断与反思报告</span>
+                    </>
+                  )}
+                </h3>
+                <div className="flex items-center gap-2">
+                  {agentReportMd && !isAgentRunning && !isScreenerRunning && (
+                    <button
+                      onClick={() => handlePushToWeChat()}
+                      disabled={isPushingWeChat}
+                      className="px-3 py-1.5 bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-md"
+                    >
+                      <Send className={`w-3.5 h-3.5 ${isPushingWeChat ? 'animate-pulse' : ''}`} />
+                      <span>{isPushingWeChat ? '发送中...' : '📱 发送至微信'}</span>
+                    </button>
+                  )}
+                  {(isAgentRunning || isScreenerRunning) && (
+                    <span className="text-xs text-purple-300 flex items-center gap-2 font-mono">
+                      <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
+                      {isScreenerRunning ? '智能选股 Agent 多周期分级匹配中...' : 'Agent 结合记忆思考进化中...'}
+                    </span>
+                  )}
+                </div>
               </div>
 
+              {(isScreenerRunning || agentReportMd.includes('智能选股') || agentReportMd.includes('Screener') || agentReportMd.includes('分级选股')) && (
+                <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-slate-800/60 text-[11px]">
+                  <span className="text-slate-400 font-medium">买卖分类体系:</span>
+                  <span className="px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 font-semibold flex items-center gap-1">
+                    <span>⚡ 短线交易</span>
+                    <span className="text-[10px] text-emerald-300/70">(1~5日主线爆发/分歧低吸/3%~5%止损)</span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-sky-950/80 text-sky-400 border border-sky-800/60 font-semibold flex items-center gap-1">
+                    <span>📈 中线波段</span>
+                    <span className="text-[10px] text-sky-300/70">(2~8周多头顺势/行业ETF/MA20生命线)</span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-md bg-purple-950/80 text-purple-400 border border-purple-800/60 font-semibold flex items-center gap-1">
+                    <span>🛡️ 长线/ETF</span>
+                    <span className="text-[10px] text-purple-300/70">(数月~长期定投/低估红利/动态网格)</span>
+                  </span>
+                </div>
+              )}
             </div>
 
             {isScreenerRunning && (
@@ -2245,7 +2284,24 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                     ) : (
                       <div className="space-y-3">
                         <div className="prose prose-invert prose-sm max-w-none">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          <ReactMarkdown 
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              code({ node, inline, className, children, ...props }: any) {
+                                const match = /language-(\w+)/.exec(className || '');
+                                const lang = match ? match[1] : '';
+                                if (!inline && lang === 'condition_proposal') {
+                                  return (
+                                    <AIConditionCard 
+                                      jsonString={String(children).replace(/\n$/, '')} 
+                                      onApplied={onRefreshAll} 
+                                    />
+                                  );
+                                }
+                                return <code className={className} {...props}>{children}</code>;
+                              }
+                            }}
+                          >
                             {(msg.content || '...').replace('[WECHAT_PUSH_REQUESTED]', '').trim()}
                           </ReactMarkdown>
                         </div>

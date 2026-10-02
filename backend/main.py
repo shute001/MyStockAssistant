@@ -8,6 +8,7 @@ from routers import stocks, importer, ai, config, trades, account
 from services.scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(

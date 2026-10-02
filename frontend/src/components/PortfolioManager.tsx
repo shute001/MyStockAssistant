@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, Upload, Trash2, Clipboard, FileText, Check, FolderPlus, Edit3, Layers, ArrowUpDown, ArrowUp, ArrowDown, MoveRight, AlertTriangle, Archive, X, Tag, PlusCircle, BookmarkCheck } from 'lucide-react';
+import { Plus, Upload, Trash2, Clipboard, FileText, Check, FolderPlus, Edit3, Layers, ArrowUpDown, ArrowUp, ArrowDown, MoveRight, AlertTriangle, Archive, X, Tag, PlusCircle, BookmarkCheck, Target, ShieldAlert, Bell } from 'lucide-react';
 import { PositionItem, WatchlistItem } from '../types';
 import { AccountFundBar } from './AccountFundBar';
+import { StopLossModal } from './StopLossModal';
 
 import axios from 'axios';
 
@@ -15,21 +16,40 @@ export const getWatchlistCategories = (category?: string): string[] => {
   return parts.length > 0 ? Array.from(new Set(parts)) : ['默认自选'];
 };
 
+export const INVESTMENT_HORIZONS = [
+  { key: '短线博弈', label: '⚡ 短线博弈', desc: '1~5日快进快出 / 严格止损', colorClass: 'text-amber-300 bg-amber-950/80 border-amber-700/60' },
+  { key: '中线波段', label: '📈 中线波段', desc: '1~6个月波段 / 依托周线MA20', colorClass: 'text-indigo-300 bg-indigo-950/80 border-indigo-700/60' },
+  { key: '长线定投', label: '🌱 长线定投', desc: '低估值/ETF分批定投吸筹', colorClass: 'text-emerald-300 bg-emerald-950/80 border-emerald-700/60' },
+  { key: '网格底仓', label: '🛡️ 网格底仓', desc: '底仓持有+高抛低吸做T', colorClass: 'text-purple-300 bg-purple-950/80 border-purple-700/60' },
+];
+
+export const getHorizonBadge = (tag?: string) => {
+  if (!tag) return INVESTMENT_HORIZONS[2];
+  if (tag.includes('短') || tag.includes('高吸') || tag.includes('博弈')) return INVESTMENT_HORIZONS[0];
+  if (tag.includes('中') || tag.includes('波段') || tag.includes('趋势')) return INVESTMENT_HORIZONS[1];
+  if (tag.includes('长') || tag.includes('定投') || tag.includes('价值')) return INVESTMENT_HORIZONS[2];
+  if (tag.includes('网格') || tag.includes('做T') || tag.includes('底仓')) return INVESTMENT_HORIZONS[3];
+  return INVESTMENT_HORIZONS[2];
+};
+
 interface PortfolioManagerProps {
   positions: PositionItem[];
   watchlists: WatchlistItem[];
   onRefresh: () => void;
   onSelectStock: (symbol: string) => void;
+  onOpenAlertCenter?: () => void;
 }
 
 export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
   positions,
   watchlists,
   onRefresh,
-  onSelectStock
+  onSelectStock,
+  onOpenAlertCenter
 }) => {
   const [activeTab, setActiveTab] = useState<'position' | 'cleared' | 'watchlist'>('position');
   const [clearedPositions, setClearedPositions] = useState<PositionItem[]>([]);
+  const [selectedStopLossPosition, setSelectedStopLossPosition] = useState<PositionItem | null>(null);
 
 
   useEffect(() => {
@@ -81,7 +101,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
   const [name, setName] = useState('');
   const [costPrice, setCostPrice] = useState('');
   const [volume, setVolume] = useState('');
-  const [strategyTag, setStrategyTag] = useState('长线持有');
+  const [strategyTag, setStrategyTag] = useState('长线定投');
   const [categoryTag, setCategoryTag] = useState('默认自选');
 
   // Multi-Category Modal & State for individual stock
@@ -374,6 +394,17 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     }
   };
 
+  const handleUpdateStrategyTag = async (posId: number, newTag: string) => {
+    try {
+      await axios.patch(`/api/v1/stocks/positions/${posId}/strategy-tag`, {
+        strategy_tag: newTag
+      });
+      onRefresh();
+    } catch (err) {
+      alert('更新投资周期失败');
+    }
+  };
+
   const handleDeletePosition = async (id: number) => {
     if (!confirm('确定删除该持仓项吗？')) return;
     try {
@@ -581,6 +612,17 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
           >
             🌐 板块自选池 ({watchlists.length})
           </button>
+
+          {onOpenAlertCenter && (
+            <button
+              onClick={onOpenAlertCenter}
+              className="px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all text-slate-400 hover:text-amber-300 hover:bg-slate-900 flex items-center space-x-1.5"
+              title="统一查看所有股票触发的止损止盈预警与提醒历史"
+            >
+              <Bell className="w-3.5 h-3.5 text-amber-400" />
+              <span>🔔 预警提醒中心</span>
+            </button>
+          )}
         </div>
 
 
@@ -855,6 +897,12 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                       </div>
                     </th>
                     <th className="py-3 px-3 text-center">交易市场</th>
+                    <th className="py-3 px-3 text-center min-w-[125px]">
+                      <div className="flex items-center justify-center space-x-1" title="短线快进快出 vs 中长线定投波段">
+                        <span>投资周期</span>
+                      </div>
+                    </th>
+                    <th className="py-3 px-3 text-center">止损止盈预警</th>
                     <th className="py-3 px-3 text-center">操作</th>
                   </tr>
                 </thead>
@@ -903,6 +951,60 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                         <td className="py-3 px-3 text-right font-bold text-slate-100">{pos.market_value?.toFixed(2)}</td>
                         <td className="py-3 px-3 text-right font-semibold text-indigo-300">{pos.position_weight?.toFixed(2)}%</td>
                         <td className="py-3 px-3 text-center font-sans text-xs text-slate-400">{pos.market_name || (pos.symbol.startsWith('6') ? '上海A股' : '深圳A股')}</td>
+                        <td className="py-3 px-2 text-center font-sans">
+                          <div className="inline-flex flex-col items-center">
+                            <select
+                              value={getHorizonBadge(pos.strategy_tag).key}
+                              onChange={(e) => handleUpdateStrategyTag(pos.id, e.target.value)}
+                              className={`text-[11px] font-semibold rounded-lg px-2 py-0.5 border cursor-pointer focus:outline-none transition-all ${getHorizonBadge(pos.strategy_tag).colorClass}`}
+                              title="点击快速调整该股票的投资周期定位"
+                            >
+                              {INVESTMENT_HORIZONS.map((h) => (
+                                <option key={h.key} value={h.key} className="bg-slate-900 text-slate-100 font-sans">
+                                  {h.label}
+                                </option>
+                              ))}
+                            </select>
+                            {pos.strategy_tag?.includes('短') && (pos.profit_ratio <= -4 || (pos.pct_chg && parseFloat(pos.pct_chg) <= -3)) && (
+                              <span className="text-[10px] text-amber-400 font-bold mt-0.5 animate-pulse" title="短线标的已达破位警戒线，请严格防守或止损">
+                                ⚠️短线防破位
+                              </span>
+                            )}
+                            {(pos.strategy_tag?.includes('长') || pos.strategy_tag?.includes('定投')) && pos.profit_ratio < 0 && (
+                              <span className="text-[10px] text-emerald-400 font-medium mt-0.5" title="长线定投标的处于成本线下方，进入估值吸筹区间">
+                                🌱定投加仓位
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 text-center font-sans">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedStopLossPosition(pos);
+                            }}
+                            className={`px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1 mx-auto transition-all shadow-sm ${
+                              pos.condition_count && pos.condition_count > 0
+                                ? 'bg-gradient-to-r from-indigo-950 via-purple-950 to-indigo-950 text-indigo-200 border border-indigo-500/60 hover:border-indigo-400 hover:shadow-indigo-500/20'
+                                : 'bg-slate-950 text-slate-400 border border-slate-800 hover:border-slate-700 hover:text-slate-200'
+                            }`}
+                            title="设置或查看该股票的止损止盈、均线与MACD监控条件"
+                          >
+                            {pos.condition_count && pos.condition_count > 0 ? (
+                              <>
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                <span className="font-mono text-emerald-300 font-bold">{pos.condition_count}</span>
+                                <span>条监控</span>
+                              </>
+                            ) : (
+                              <>
+                                <Target className="w-3 h-3 text-slate-500" />
+                                <span>设条件</span>
+                              </>
+                            )}
+                          </button>
+                        </td>
                         <td className="py-3 px-3 text-center">
                           <button
                             onClick={() => handleDeletePosition(pos.id)}
@@ -1298,16 +1400,19 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">策略分类</label>
+                  <label className="block text-xs text-slate-400 mb-1 flex items-center justify-between">
+                    <span>投资周期定位</span>
+                    <span className="text-[10px] text-indigo-400">短线快进 vs 中长定投</span>
+                  </label>
                   <select
                     value={strategyTag}
                     onChange={(e) => setStrategyTag(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 cursor-pointer"
                   >
-                    <option value="长线持有">长线持有</option>
-                    <option value="短线高吸">短线高吸</option>
-                    <option value="深套做T">深套做T</option>
-                    <option value="观察池">观察池</option>
+                    <option value="短线博弈">⚡ 短线博弈 (1~5日快进快出 / 严格破位止损)</option>
+                    <option value="中线波段">📈 中线波段 (1~6个月波段 / 依托周线MA20)</option>
+                    <option value="长线定投">🌱 长线定投 (价值低估 / 指数ETF分批吸筹)</option>
+                    <option value="网格底仓">🛡️ 网格底仓 (底仓持有 + 高抛低吸做T)</option>
                   </select>
                 </div>
               </>
@@ -1677,6 +1782,17 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Stop-Loss & Take-Profit Condition Setup Modal */}
+      {selectedStopLossPosition && (
+        <StopLossModal
+          position={selectedStopLossPosition}
+          onClose={() => setSelectedStopLossPosition(null)}
+          onConditionsUpdated={() => {
+            onRefresh();
+          }}
+        />
       )}
 
     </div>

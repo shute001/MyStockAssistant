@@ -7,6 +7,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AnalysisReportItem, LLMConfigItem } from '../types';
+import { AIConditionCard } from './AIConditionCard';
 import axios from 'axios';
 
 interface AIAnalysisReportProps {
@@ -234,6 +235,57 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
                     </div>
                     {diagnosisScope === 'POSITIONS_ONLY' && <CheckCircle2 className="w-3.5 h-3.5 text-indigo-400" />}
                   </button>
+
+                  {/* Horizon Cycle Filters */}
+                  <div className="pt-2 pb-0.5 border-t border-slate-800/80">
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1.5 flex items-center justify-between">
+                      <span>🎯 投资周期专项诊断：</span>
+                      <span className="text-[10px] text-indigo-400">短线快进 vs 中长定投</span>
+                    </label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => { setDiagnosisScope('HORIZON:SHORT'); setCustomSymbolInput(''); }}
+                        className={`px-2 py-1.5 rounded-xl text-[11px] font-semibold flex flex-col items-center justify-center border transition-all text-center ${
+                          diagnosisScope === 'HORIZON:SHORT'
+                            ? 'bg-amber-950/90 border-amber-500 text-amber-200 shadow'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-amber-300 hover:border-slate-700'
+                        }`}
+                        title="仅诊断标记为短线博弈、高吸题材的标的"
+                      >
+                        <span className="text-sm">⚡</span>
+                        <span>短线博弈</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => { setDiagnosisScope('HORIZON:MID'); setCustomSymbolInput(''); }}
+                        className={`px-2 py-1.5 rounded-xl text-[11px] font-semibold flex flex-col items-center justify-center border transition-all text-center ${
+                          diagnosisScope === 'HORIZON:MID'
+                            ? 'bg-indigo-950/90 border-indigo-500 text-indigo-200 shadow'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-indigo-300 hover:border-slate-700'
+                        }`}
+                        title="仅诊断标记为中线波段、均线多头的标的"
+                      >
+                        <span className="text-sm">📈</span>
+                        <span>中线波段</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => { setDiagnosisScope('HORIZON:LONG'); setCustomSymbolInput(''); }}
+                        className={`px-2 py-1.5 rounded-xl text-[11px] font-semibold flex flex-col items-center justify-center border transition-all text-center ${
+                          diagnosisScope === 'HORIZON:LONG'
+                            ? 'bg-emerald-950/90 border-emerald-500 text-emerald-200 shadow'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-emerald-300 hover:border-slate-700'
+                        }`}
+                        title="仅诊断标记为长线价值、定投吸筹与ETF基金的标的"
+                      >
+                        <span className="text-sm">🌱</span>
+                        <span>长线定投</span>
+                      </button>
+                    </div>
+                  </div>
 
                   {/* Specific Category Selection Dropdown */}
                   <div className="pt-1">
@@ -592,6 +644,14 @@ export const AIAnalysisReport: React.FC<AIAnalysisReportProps> = ({
                         {children}
                       </td>
                     ),
+                    code: ({ node, inline, className, children, ...props }: any) => {
+                      const match = /language-(\w+)/.exec(className || '');
+                      const lang = match ? match[1] : '';
+                      if (!inline && lang === 'condition_proposal') {
+                        return <AIConditionCard jsonString={String(children).replace(/\n$/, '')} />;
+                      }
+                      return <code className={className} {...props}>{children}</code>;
+                    },
                     hr: () => <hr className="my-6 border-slate-800/80" />
                   }}
                 >

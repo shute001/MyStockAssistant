@@ -15,6 +15,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
   onClose,
   onTriggerStockAI
 }) => {
+  const [period, setPeriod] = useState<'day' | 'week' | 'month'>('day');
   const [klineData, setKlineData] = useState<KLineRecord[]>([]);
   const [stockName, setStockName] = useState<string>('');
   const [tradeRecords, setTradeRecords] = useState<any[]>([]);
@@ -39,7 +40,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       setIsLoading(true);
       try {
         const [klineRes, watchRes, tradeRes] = await Promise.all([
-          axios.get(`/api/v1/stocks/${symbol}/kline?days=60`),
+          axios.get(`/api/v1/stocks/${symbol}/kline?days=365&period=${period}`),
           axios.get('/api/v1/stocks/watchlists').catch(() => ({ data: [] })),
           axios.get(`/api/v1/trades?symbol=${symbol}&page_size=200`).catch(() => ({ data: { items: [] } }))
         ]);
@@ -64,9 +65,10 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       }
     };
     fetchKline();
-  }, [symbol]);
+  }, [symbol, period]);
 
   // Format ECharts Options
+  const periodLabel = period === 'day' ? '日K' : period === 'week' ? '周K' : '月K';
   const dates = klineData.map((d) => d.date);
   const candlestickData = klineData.map((d) => [d.open, d.close, d.low, d.high]);
   const ma5 = klineData.map((d) => d.ma5 || null);
@@ -118,13 +120,13 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
         const colorClass = isUp ? '#EF4444' : '#10B981';
         const digits = record.close < 10 ? 3 : 2;
 
-        let html = `<div style="font-weight:bold;margin-bottom:6px;border-bottom:1px solid #334155;padding-bottom:4px;color:#94A3B8">${record.date}</div>`;
+        let html = `<div style="font-weight:bold;margin-bottom:6px;border-bottom:1px solid #334155;padding-bottom:4px;color:#94A3B8">${record.date} (${periodLabel})</div>`;
         html += `<div style="display:grid;grid-template-columns:auto auto;gap:4px 16px;font-size:12px">`;
         html += `<span>收盘价:</span><span style="font-weight:bold;color:${colorClass};font-family:monospace">¥${record.close?.toFixed(digits)}</span>`;
         html += `<span>开盘价:</span><span style="font-family:monospace">¥${record.open?.toFixed(digits)}</span>`;
         html += `<span>最高价:</span><span style="font-family:monospace">¥${record.high?.toFixed(digits)}</span>`;
         html += `<span>最低价:</span><span style="font-family:monospace">¥${record.low?.toFixed(digits)}</span>`;
-        html += `<span>日涨跌:</span><span style="font-weight:bold;color:${colorClass};font-family:monospace">${record.pct_chg >= 0 ? '+' : ''}${record.pct_chg?.toFixed(2)}%</span>`;
+        html += `<span>${period === 'day' ? '日涨跌' : period === 'week' ? '周涨跌' : '月涨跌'}:</span><span style="font-weight:bold;color:${colorClass};font-family:monospace">${record.pct_chg >= 0 ? '+' : ''}${record.pct_chg?.toFixed(2)}%</span>`;
         html += `<span>成交量:</span><span style="font-family:monospace">${record.volume?.toLocaleString()} 手</span>`;
         
         if (record.ma5) html += `<span>MA5:</span><span style="color:#38BDF8;font-family:monospace">¥${record.ma5.toFixed(digits)}</span>`;
@@ -136,7 +138,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       }
     },
     legend: {
-      data: ['日K', 'MA5', 'MA10', 'MA20'],
+      data: [periodLabel, 'MA5', 'MA10', 'MA20'],
       textStyle: { color: '#94A3B8' }
     },
     grid: [
@@ -153,7 +155,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
     ],
     series: [
       {
-        name: '日K',
+        name: periodLabel,
         type: 'candlestick',
         data: candlestickData,
         itemStyle: {
@@ -203,6 +205,33 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
               <TrendingUp className="w-5 h-5 text-indigo-400" />
               <span>{stockName ? `${stockName} (${symbol})` : `行情看板 (${symbol})`}</span>
             </h3>
+            {/* Period Switcher */}
+            <div className="inline-flex items-center bg-slate-900/80 p-0.5 rounded-lg border border-slate-700/60 text-xs">
+              <button
+                onClick={() => setPeriod('day')}
+                className={`px-2.5 py-0.5 rounded-md font-medium transition-all ${
+                  period === 'day' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                日K
+              </button>
+              <button
+                onClick={() => setPeriod('week')}
+                className={`px-2.5 py-0.5 rounded-md font-medium transition-all ${
+                  period === 'week' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                周K
+              </button>
+              <button
+                onClick={() => setPeriod('month')}
+                className={`px-2.5 py-0.5 rounded-md font-medium transition-all ${
+                  period === 'month' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                月K
+              </button>
+            </div>
             {dataHealth.status === 'mock' && (
               <span className="hidden sm:flex items-center gap-1 rounded-full border border-amber-800/60 bg-amber-950/60 px-2 py-0.5 text-[10px] font-medium text-amber-200">
                 <AlertTriangle className="w-3 h-3" /> 演示 K 线
