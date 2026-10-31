@@ -3,7 +3,7 @@ import ReactECharts from 'echarts-for-react';
 import { 
   DollarSign, TrendingUp, TrendingDown, PieChart, ShieldAlert, Cpu, 
   Award, Globe, Flame, Newspaper, RefreshCw, AlertTriangle, ArrowUpRight, 
-  ArrowDownRight, Target, Compass, Sparkles, ExternalLink
+  ArrowDownRight, Target, Compass, Sparkles, ExternalLink, X
 } from 'lucide-react';
 import { PositionItem, WatchlistItem } from '../types';
 import axios from 'axios';
@@ -25,22 +25,40 @@ export const Dashboard: React.FC<DashboardProps> = ({
     indices: { name: string; symbol: string; price: number; pct_chg: string; pct_num: number }[];
     hot_sectors: { name: string; pct_chg: string; pct_num: number }[];
     latest_news: string[];
+    latest_news_detail?: {
+      id: string | number;
+      title: string;
+      content: string;
+      time: string;
+      date: string;
+      level: string;
+      is_important: boolean;
+      source: string;
+      url: string;
+    }[];
     meta?: { updated_at: string; status: 'live' | 'partial_fallback'; fallback_sections: string[] };
   } | null>(null);
   const [macroError, setMacroError] = useState(false);
+  const [isTelegraphModalOpen, setIsTelegraphModalOpen] = useState(false);
+  const [isRefreshingNews, setIsRefreshingNews] = useState(false);
+  const [telegraphFilter, setTelegraphFilter] = useState<'all' | 'important'>('all');
 
   useEffect(() => {
     fetchMacro();
   }, []);
 
-  const fetchMacro = async () => {
+  const fetchMacro = async (force: any = false) => {
+    const isForce = force === true;
     try {
+      if (isForce) setIsRefreshingNews(true);
       const res = await axios.get('/api/v1/stocks/market-macro');
       setMacroData(res.data);
       setMacroError(false);
     } catch (err) {
       console.error('Failed to fetch market macro data:', err);
       setMacroError(true);
+    } finally {
+      if (isForce) setIsRefreshingNews(false);
     }
   };
 
@@ -249,19 +267,84 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
 
-            {/* Latest News Headlines */}
-            <div className="lg:col-span-2 bg-slate-950/60 border border-slate-800/80 rounded-xl p-3 space-y-2">
-              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                <Newspaper className="w-3.5 h-3.5 text-indigo-400" />
-                最新市场要闻与快讯流动
-              </span>
-              <div className="space-y-1 max-h-[85px] overflow-y-auto pr-1">
-                {macroData.latest_news.map((news, i) => (
-                  <div key={i} className="text-xs text-slate-300 truncate flex items-center space-x-2 py-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0" />
-                    <span className="truncate">{news}</span>
-                  </div>
-                ))}
+            {/* Latest News Headlines (Cailianpress 7x24H Telegraph) */}
+            <div className="lg:col-span-2 bg-slate-950/70 border border-slate-800/90 rounded-xl p-3 space-y-2 flex flex-col justify-between">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                    <span className="text-rose-400 font-extrabold tracking-wide">财联社</span>
+                    <span>7×24H 实时电报</span>
+                  </span>
+                  <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] bg-rose-950/60 text-rose-300 border border-rose-800/40">
+                    官方权威源
+                  </span>
+                </div>
+                <div className="flex items-center space-x-1.5">
+                  <button
+                    onClick={() => fetchMacro(true)}
+                    disabled={isRefreshingNews}
+                    className="p-1 hover:bg-slate-800/60 rounded text-slate-400 hover:text-slate-200 transition-colors"
+                    title="刷新最新电报"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingNews ? 'animate-spin text-indigo-400' : ''}`} />
+                  </button>
+                  <button
+                    onClick={() => setIsTelegraphModalOpen(true)}
+                    className="text-[11px] text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-0.5 px-1 py-0.5"
+                  >
+                    <span>全部电报</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+
+              {/* News Stream List */}
+              <div className="space-y-1.5 max-h-[85px] overflow-y-auto pr-1">
+                {macroData.latest_news_detail && macroData.latest_news_detail.length > 0 ? (
+                  macroData.latest_news_detail.slice(0, 5).map((item, i) => (
+                    <div 
+                      key={item.id || i} 
+                      className="text-xs text-slate-300 flex items-center justify-between gap-2 py-0.5 group hover:bg-slate-900/60 rounded px-1 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[10px] font-mono text-slate-400 flex-shrink-0">
+                          {item.time?.slice(0, 5) || ''}
+                        </span>
+                        {item.is_important && (
+                          <span className="px-1 py-0.2 rounded text-[9px] bg-rose-950/80 text-rose-300 border border-rose-700/50 flex-shrink-0 font-medium">
+                            重磅
+                          </span>
+                        )}
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={item.content || item.title}
+                          className="truncate hover:text-rose-300 transition-colors"
+                        >
+                          {item.title}
+                        </a>
+                      </div>
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-400 flex-shrink-0"
+                        title="查看财联社原文"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  ))
+                ) : (
+                  macroData.latest_news.map((news, i) => (
+                    <div key={i} className="text-xs text-slate-300 truncate flex items-center space-x-2 py-0.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-400 flex-shrink-0" />
+                      <span className="truncate">{news}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -506,6 +589,144 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Cailianpress 7x24H Full Telegraph Modal */}
+      {isTelegraphModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-rose-950/60 border border-rose-800/40 rounded-xl">
+                  <Flame className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-slate-100 text-sm sm:text-base">财联社 7×24H 实时财经电报</h3>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-950 text-rose-300 border border-rose-700/50">
+                      官方一手源
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">紧跟政策异动、行业热点与龙头个股第一线资讯流动</p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                {/* Filter toggle */}
+                <div className="flex bg-slate-800/80 p-0.5 rounded-lg text-xs border border-slate-700/60">
+                  <button
+                    onClick={() => setTelegraphFilter('all')}
+                    className={`px-2.5 py-1 rounded-md transition-all ${
+                      telegraphFilter === 'all' 
+                        ? 'bg-indigo-600 text-white font-medium shadow' 
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    全部资讯
+                  </button>
+                  <button
+                    onClick={() => setTelegraphFilter('important')}
+                    className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 ${
+                      telegraphFilter === 'important' 
+                        ? 'bg-rose-600 text-white font-medium shadow' 
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <span>🔥 仅看重磅</span>
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => fetchMacro(true)}
+                  disabled={isRefreshingNews}
+                  className="p-2 hover:bg-slate-800 rounded-xl text-slate-400 hover:text-slate-200 transition-colors"
+                  title="刷新最新电报"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRefreshingNews ? 'animate-spin text-indigo-400' : ''}`} />
+                </button>
+
+                <button
+                  onClick={() => setIsTelegraphModalOpen(false)}
+                  className="p-2 hover:bg-slate-800 rounded-xl text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body - Telegraph Stream */}
+            <div className="p-4 overflow-y-auto space-y-3 flex-1 custom-scrollbar">
+              {(() => {
+                const rawItems = macroData?.latest_news_detail || [];
+                const filtered = telegraphFilter === 'important' 
+                  ? rawItems.filter(item => item.is_important) 
+                  : rawItems;
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="py-12 text-center text-slate-400 text-xs">
+                      {telegraphFilter === 'important' ? '近期暂无特级重磅电报，可切换至【全部资讯】浏览。' : '暂无电报数据，请点击右上角刷新。'}
+                    </div>
+                  );
+                }
+
+                return filtered.map((item, idx) => (
+                  <div 
+                    key={item.id || idx}
+                    className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition-all space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-mono text-indigo-400 font-semibold bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800/40">
+                          {item.time || ''}
+                        </span>
+                        <span className="text-[11px] text-slate-400">{item.date || ''}</span>
+                        {item.is_important && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-700/60">
+                            🔥 重磅电报
+                          </span>
+                        )}
+                        <span className="text-[11px] text-slate-400">来源: {item.source}</span>
+                      </div>
+
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-indigo-400 hover:text-indigo-300 hover:underline flex items-center space-x-1"
+                      >
+                        <span>财联社原文</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+
+                    <h4 className="text-sm font-bold text-slate-100 leading-snug">
+                      {item.title}
+                    </h4>
+
+                    {item.content && item.content !== item.title && (
+                      <p className="text-xs text-slate-300 leading-relaxed bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/50">
+                        {item.content}
+                      </p>
+                    )}
+                  </div>
+                ));
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-slate-800/80 bg-slate-950/40 text-center text-xs text-slate-400 flex items-center justify-between px-4">
+              <span>数据直连：财联社 (Cailianpress Web API) 7×24H 实时电报流</span>
+              <button
+                onClick={() => setIsTelegraphModalOpen(false)}
+                className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition-colors"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

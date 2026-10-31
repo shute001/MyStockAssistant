@@ -217,6 +217,33 @@ class AlertNotification(Base):
     created_at = Column(DateTime, default=bj_now)
 
 
+class ScreenerRecommendationRecord(Base):
+    __tablename__ = "screener_recommendations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_id = Column(Integer, nullable=True, index=True)
+    symbol = Column(String(10), nullable=False, index=True)
+    name = Column(String(50), nullable=False)
+    scope = Column(String(30), default="ALL")  # ALL, SHORT_TERM, MID_TERM, LONG_TERM_ETF
+    tier_category = Column(String(50), nullable=False)  # ⚡ 短线交易 / 📈 中线波段 / 🛡️ 长线价值/ETF
+    recommend_date = Column(String(20), nullable=False, index=True)  # YYYY-MM-DD
+    recommend_price = Column(Float, nullable=False)  # 推荐时的基准市价
+    suggested_buy_range = Column(String(50), nullable=True)  # 建议买入区间
+    stop_loss_price = Column(Float, nullable=True)  # 建议硬止损位
+    target_price = Column(Float, nullable=True)  # 建议止盈目标位
+    target_profit_pct = Column(Float, nullable=True)  # 预期目标涨幅%
+    core_thesis = Column(Text, nullable=True)  # 核心推选逻辑/战法
+    indicators_snapshot = Column(Text, nullable=True)  # 推选时刻的技术指标 JSON 快照
+    status = Column(String(20), default="TRACKING", index=True)  # TRACKING, HIT_TARGET, HIT_STOP_LOSS, CLOSED
+    latest_price = Column(Float, nullable=True)  # 最新市价
+    current_profit_pct = Column(Float, default=0.0)  # 当前累计收益率%
+    max_profit_pct = Column(Float, default=0.0)  # 推荐后最高触及涨幅%
+    max_loss_pct = Column(Float, default=0.0)  # 推荐后最大回撤跌幅%
+    last_evaluated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=bj_now)
+    updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     # Ensure missing columns exist for SQLite schema backward compatibility

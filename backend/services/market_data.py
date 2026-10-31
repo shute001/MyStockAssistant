@@ -46,6 +46,9 @@ class MarketDataService:
         "message": "尚未请求 K 线"
     }
 
+    _eastmoney_fail_count: int = 0
+    _eastmoney_disabled_until: float = 0.0
+
     _STOCK_NAME_CACHE: Dict[str, str] = {
         "600519": "贵州茅台",
         "000001": "平安银行",
@@ -233,39 +236,58 @@ class MarketDataService:
             prefix, _ = cls.get_symbol_prefix_and_market(s)
             items.append(f"s_{prefix}{s}")
 
-        url = f"http://qt.gtimg.cn/q={','.join(items)}"
         results = {}
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            res = urllib.request.urlopen(req, timeout=4).read().decode('gbk', errors='ignore')
-            lines = res.strip().split(';')
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split('~')
-                if len(parts) > 5 and parts[2]:
-                    name = parts[1].strip()
-                    code = parts[2].zfill(6)
-                    price = float(parts[3])
-                    pct = float(parts[5])
-                    if name:
-                        cls._STOCK_NAME_CACHE[code] = name
-                    results[code] = {
-                        "symbol": code,
-                        "name": name,
-                        "current_price": price,
-                        "pct_chg": f"{pct:+.2f}%",
-                        "pct_chg_num": pct
-                    }
+        # Chunk items into batches of 300 to prevent HTTP GET URL overflow (qt.gtimg.cn URL limit)
+        chunk_size = 300
+        any_success = False
+
+        for i in range(0, len(items), chunk_size):
+            chunk = items[i:i + chunk_size]
+            url = f"http://qt.gtimg.cn/q={','.join(chunk)}"
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                res = urllib.request.urlopen(req, timeout=4).read().decode('gbk', errors='ignore')
+                lines = res.strip().split(';')
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split('~')
+                    if len(parts) > 5 and parts[2]:
+                        name = parts[1].strip()
+                        code = parts[2].zfill(6)
+                        price = float(parts[3]) if parts[3] else 0.0
+                        pct = float(parts[5]) if parts[5] else 0.0
+                        vol = float(parts[6]) if len(parts) > 6 and parts[6] else 0.0
+                        amt_wan = float(parts[7]) if len(parts) > 7 and parts[7] else 0.0
+                        mcap_yi = float(parts[9]) if len(parts) > 9 and parts[9] else 0.0
+                        stype = parts[10].strip() if len(parts) > 10 else ""
+                        if name:
+                            cls._STOCK_NAME_CACHE[code] = name
+                        results[code] = {
+                            "symbol": code,
+                            "name": name,
+                            "current_price": price,
+                            "pct_chg": f"{pct:+.2f}%",
+                            "pct_chg_num": pct,
+                            "volume": vol,
+                            "amount_wan": amt_wan,
+                            "amount_yi": round(amt_wan / 10000.0, 2),
+                            "market_cap_yi": mcap_yi,
+                            "stype": stype
+                        }
+                any_success = True
+            except Exception as e:
+                logger.warning(f"Error fetching batch quotes chunk {i//chunk_size + 1}: {e}")
+
+        if any_success:
             cls._quote_health = {
                 "status": "live" if results else "unavailable",
                 "source": "Tencent Finance",
                 "updated_at": cls._now_text(),
                 "message": "" if results else "行情源未返回有效报价"
             }
-        except Exception as e:
-            logger.warning(f"Error fetching batch quotes: {e}")
+        else:
             cls._quote_health = {
                 "status": "unavailable",
                 "source": "Tencent Finance",
@@ -296,41 +318,51 @@ class MarketDataService:
         symbol = cls.format_symbol(symbol)
         df = pd.DataFrame()
 
-        # 1. Primary Source: EastMoney REST API (Provides accurate daily pct_chg vs pre_close & turnover %)
-        try:
-            _, market = cls.get_symbol_prefix_and_market(symbol)
-            secid = f"{market}.{symbol}"
-            url_em = f"http://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&end=20500101&lmt={days}"
-            req = urllib.request.Request(url_em, headers={'User-Agent': 'Mozilla/5.0'})
-            res = json.loads(urllib.request.urlopen(req, timeout=5).read().decode('utf-8'))
-            data = res.get("data") if res and isinstance(res, dict) else None
-            klines = data.get("klines", []) if data and isinstance(data, dict) else []
-            records = []
-            for line in klines:
-                parts = line.split(',')
-                # parts: 0=date, 1=open, 2=close, 3=high, 4=low, 5=vol, 6=amount, 7=amp, 8=pct_chg, 9=chg, 10=turnover
-                records.append({
-                    "date": parts[0],
-                    "symbol": symbol,
-                    "open": float(parts[1]),
-                    "close": float(parts[2]),
-                    "high": float(parts[3]),
-                    "low": float(parts[4]),
-                    "volume": int(parts[5]),
-                    "amount": float(parts[6]),
-                    "pct_chg": float(parts[8]),
-                    "turnover": float(parts[10]) if len(parts) > 10 and parts[10] != "" else 0.0
-                })
-            if records:
-                df = pd.DataFrame(records)
-                cls._kline_health = {
-                    "status": "live",
-                    "source": "EastMoney",
-                    "updated_at": cls._now_text(),
-                    "message": "成功拉取完整K线及换手率数据"
-                }
-        except Exception as e:
-            logger.warning(f"EastMoney K-line failed for {symbol}, trying Tencent: {e}")
+        # 1. Primary Source: EastMoney REST API (with dynamic circuit breaker)
+        now_ts = time.time()
+        should_try_eastmoney = (now_ts >= cls._eastmoney_disabled_until)
+
+        if should_try_eastmoney:
+            try:
+                _, market = cls.get_symbol_prefix_and_market(symbol)
+                secid = f"{market}.{symbol}"
+                url_em = f"http://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=1&end=20500101&lmt={days}"
+                req = urllib.request.Request(url_em, headers={'User-Agent': 'Mozilla/5.0'})
+                res = json.loads(urllib.request.urlopen(req, timeout=3).read().decode('utf-8'))
+                data = res.get("data") if res and isinstance(res, dict) else None
+                klines = data.get("klines", []) if data and isinstance(data, dict) else []
+                records = []
+                for line in klines:
+                    parts = line.split(',')
+                    # parts: 0=date, 1=open, 2=close, 3=high, 4=low, 5=vol, 6=amount, 7=amp, 8=pct_chg, 9=chg, 10=turnover
+                    records.append({
+                        "date": parts[0],
+                        "symbol": symbol,
+                        "open": float(parts[1]),
+                        "close": float(parts[2]),
+                        "high": float(parts[3]),
+                        "low": float(parts[4]),
+                        "volume": int(parts[5]),
+                        "amount": float(parts[6]),
+                        "pct_chg": float(parts[8]),
+                        "turnover": float(parts[10]) if len(parts) > 10 and parts[10] != "" else 0.0
+                    })
+                if records:
+                    df = pd.DataFrame(records)
+                    cls._eastmoney_fail_count = 0
+                    cls._kline_health = {
+                        "status": "live",
+                        "source": "EastMoney",
+                        "updated_at": cls._now_text(),
+                        "message": "成功拉取完整K线及换手率数据"
+                    }
+            except Exception as e:
+                cls._eastmoney_fail_count += 1
+                if cls._eastmoney_fail_count >= 3:
+                    cls._eastmoney_disabled_until = time.time() + 600
+                    logger.warning(f"EastMoney K-line unreachable ({e}). Circuit breaker activated: routing directly to Tencent Finance for the next 10 minutes.")
+                else:
+                    logger.warning(f"EastMoney K-line failed for {symbol}, trying Tencent: {e}")
 
         # 2. Secondary Fallback: Tencent Finance qfq API
         if df.empty:
@@ -385,6 +417,7 @@ class MarketDataService:
         # 3. Tertiary Fallback: realistic mock if completely offline
         if df.empty:
             df = cls._generate_mock_kline(symbol, days)
+            df.attrs["is_mock"] = True
             cls._kline_health = {
                 "status": "mock",
                 "source": "Mock Generator",
@@ -411,7 +444,7 @@ class MarketDataService:
             else:
                 # Post-market / Weekend: if latest bar date is the expected last trading day, ensure exact alignment
                 expected_last_date = cls.get_latest_trading_date()
-                if df.iloc[-1]["date"] == expected_last_date and abs(df.iloc[-1]["close"] - quote["current_price"]) < 0.01:
+                if df.iloc[-1]["date"] == expected_last_date:
                     df.at[df.index[-1], "close"] = quote["current_price"]
                     df.at[df.index[-1], "pct_chg"] = quote["pct_chg_num"]
 
@@ -465,12 +498,14 @@ class MarketDataService:
         df["kdj_d"] = [round(x, 2) for x in d]
         df["kdj_j"] = [round(3 * kv - 2 * dv, 2) for kv, dv in zip(k, d)]
 
-        # 4. RSI (6, 12, 24)
+        # 4. RSI (6, 12, 24) - Wilder's Smoothing (Standard in TongDaXin / TongHuaShun / TradingView)
         delta = df["close"].diff()
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
         for period in [6, 12, 24]:
-            gain = (delta.where(delta > 0, 0.0)).rolling(window=period).mean()
-            loss = (-delta.where(delta < 0, 0.0)).rolling(window=period).mean()
-            rs = gain / (loss + 1e-8)
+            avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+            avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+            rs = avg_gain / (avg_loss + 1e-8)
             df[f"rsi{period}"] = (100 - (100 / (1 + rs))).round(2)
 
         # 5. BOLL (20, 2)
@@ -494,13 +529,13 @@ class MarketDataService:
         stk_name = cls.get_stock_name(symbol)
         try:
             df = cls._fetch_remote_kline(symbol, days=days)
-            if df.empty:
+            if df.empty or getattr(df, "attrs", {}).get("is_mock", False):
                 return {
                     "symbol": symbol,
                     "name": stk_name,
                     "synced_count": 0,
-                    "status": "error",
-                    "message": "无法获取远程K线数据",
+                    "status": "mock_skipped" if not df.empty else "error",
+                    "message": "离线模拟K线跳过落库" if not df.empty else "无法获取远程K线数据",
                     "records": []
                 }
 
@@ -702,7 +737,11 @@ class MarketDataService:
             if resampled.empty:
                 return pd.DataFrame()
 
+            max_daily_date = str(df["date"].max()) if "date" in df.columns else ""
             resampled["date"] = resampled["date_dt"].dt.strftime("%Y-%m-%d")
+            # Ensure resampled weekly/monthly dates never exceed the actual latest daily trade date
+            if max_daily_date:
+                resampled.loc[resampled["date"] > max_daily_date, "date"] = max_daily_date
             resampled.drop(columns=["date_dt"], inplace=True)
 
             symbol = df["symbol"].iloc[0] if "symbol" in df.columns else ""
@@ -742,7 +781,21 @@ class MarketDataService:
                     # Check if local records contain the latest expected trading date
                     # Also check if turnover is not entirely 0.0 for all records (legacy corrupt data)
                     has_real_turnover = any((r.turnover or 0.0) > 0.0 for r in db_records[-5:])
-                    if latest_record_date >= expected_trade_date and has_real_turnover:
+                    
+                    # Verify DB latest close against realtime quote to prevent mock pollution or split divergence
+                    quote = cls.get_realtime_quote(symbol)
+                    q_price = quote.get("current_price", 0.0)
+                    db_last_close = float(db_records[-1].close or 0.0)
+                    price_divergent = False
+                    if q_price > 0 and db_last_close > 0:
+                        if abs(db_last_close - q_price) / q_price > 0.03:
+                            price_divergent = True
+                            logger.warning(
+                                f"DB kline price divergent for {symbol}: DB close={db_last_close}, quote={q_price} "
+                                f"(diff {abs(db_last_close - q_price) / q_price:.1%}). Invalidate DB cache."
+                            )
+
+                    if latest_record_date >= expected_trade_date and has_real_turnover and not price_divergent:
                         records = []
                         for r in db_records:
                             records.append({
@@ -757,8 +810,13 @@ class MarketDataService:
                                 "vol_ratio": r.vol_ratio
                             })
                         df_daily = pd.DataFrame(records)
+                        # Recalculate indicators dynamically so Wilder RSI and latest algorithm refinements are immediately active
+                        df_daily = cls._calculate_indicators(df_daily)
                     else:
-                        logger.info(f"Local K-lines for {symbol} are stale/missing turnover (latest: {latest_record_date}, expected: {expected_trade_date}), refreshing from remote...")
+                        logger.info(
+                            f"Local K-lines for {symbol} are stale/missing turnover/divergent "
+                            f"(latest: {latest_record_date}, expected: {expected_trade_date}, divergent: {price_divergent}), refreshing from remote..."
+                        )
             except Exception as e:
                 logger.warning(f"Failed to read kline from DB for {symbol}: {e}")
         else:
@@ -839,7 +897,20 @@ class MarketDataService:
         ma250 = round(float(latest.get("ma250") or real_price), 2) if latest.get("ma250") else None
 
         # MA trend judgment
-        ma_trend = "多头排列 (强势拉升)" if ma5 > ma10 > ma20 else ("空头排列 (弱势寻底)" if ma5 < ma10 < ma20 else "均线粘合震荡整理")
+        if ma5 > ma10 > ma20:
+            if real_price < ma5:
+                ma_trend = "多头排列良性回踩 (上升趋势中短期分歧)"
+            else:
+                ma_trend = "多头排列 (强势拉升)"
+        elif real_price >= ma20:
+            if ma5 >= ma10:
+                ma_trend = "突破站稳20日生命线 (多头修复转强)"
+            else:
+                ma_trend = "站上20日生命线企稳震荡"
+        elif ma5 < ma10 < ma20 and real_price < ma20:
+            ma_trend = "空头排列 (处于20日线下弱势寻底)"
+        else:
+            ma_trend = "均线交织震荡整理"
         annual_line_status = "位于年线(MA250)上方，牛市多头格局" if (ma250 and real_price >= ma250) else ("跌破年线(MA250)，防范大级别熊市下行" if ma250 else "上市不足一年")
 
         # MACD Status
@@ -847,19 +918,43 @@ class MarketDataService:
         prev_macd_hist = round(float(prev.get("macd_hist") or 0.0), 3)
         macd_dif = round(float(latest.get("macd_dif") or 0.0), 3)
         macd_dea = round(float(latest.get("macd_dea") or 0.0), 3)
+        above_zero = (macd_dif > 0 and macd_dea > 0)
+        below_zero = (macd_dif < 0 and macd_dea < 0)
 
         if macd_hist > 0 and prev_macd_hist <= 0:
-            macd_status = "MACD零轴下方/附近金叉启动 (买点确认信号)"
+            if above_zero:
+                macd_status = f"MACD零轴上方强势二次金叉 (DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，多头加速启动"
+            elif below_zero:
+                macd_status = f"MACD处于零轴下方弱势金叉 (DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，超跌反弹修复(未站上零轴)"
+            else:
+                macd_status = f"MACD零轴附近金叉 (DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，尝试突破多空分水岭"
         elif macd_hist < 0 and prev_macd_hist >= 0:
-            macd_status = "MACD高位死叉成型 (阶段性顶部预警)"
+            if above_zero:
+                macd_status = f"MACD零轴上方死叉成型 (DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，阶段性冲高受阻"
+            else:
+                macd_status = f"MACD零轴下方死叉成型 (DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，空头二次破位"
         elif macd_hist > 0 and macd_hist > prev_macd_hist:
-            macd_status = "MACD红柱连续放大，多头加速扩散"
+            if above_zero:
+                macd_status = f"MACD双线稳居零轴上方(DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，红柱持续放大，多头加速"
+            elif below_zero:
+                macd_status = f"MACD双线仍在零轴下方(DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，红柱持续放大，低位超跌反弹"
+            else:
+                macd_status = f"MACD正穿越零轴(DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，红柱放大转强"
         elif macd_hist > 0 and macd_hist <= prev_macd_hist:
-            macd_status = "MACD红柱收敛，短线动能出现背离分歧"
+            if above_zero:
+                macd_status = f"MACD处于零轴上方多头区(DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，但红柱收敛，短线动能分歧"
+            else:
+                macd_status = f"MACD处于零轴下方(DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，反弹红柱动能收敛"
         elif macd_hist < 0 and macd_hist < prev_macd_hist:
-            macd_status = "MACD绿柱扩散，空头主导下跌"
+            if below_zero:
+                macd_status = f"MACD零轴下方双线空头(DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，绿柱扩散下行"
+            else:
+                macd_status = f"MACD零轴上方回踩洗盘(DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，绿柱扩张"
         else:
-            macd_status = "MACD绿柱收缩，止跌企稳迹象"
+            if below_zero:
+                macd_status = f"MACD零轴下方绿柱收缩(DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，低位筑底企稳迹象"
+            else:
+                macd_status = f"MACD零轴上方绿柱收缩(DIF:{macd_dif:+.2f}, DEA:{macd_dea:+.2f})，强势回调洗盘接近尾声"
 
         # KDJ Status
         kdj_k = round(float(latest.get("kdj_k") or 50.0), 2)
@@ -1002,14 +1097,51 @@ class MarketDataService:
             w_ma10 = round(float(w_latest.get("ma10") or w_close), 2)
             w_ma20 = round(float(w_latest.get("ma20") or w_close), 2)  # Weekly MA20 Mid-term Life Line!
             w_above_ma20 = bool(w_close >= w_ma20)
-            w_trend = "周线多头排列 (中线生命线健康上行)" if w_ma5 > w_ma10 > w_ma20 else ("周线空头向下 (中线走弱破位)" if w_ma5 < w_ma10 < w_ma20 else "周线震荡蓄势整理")
+            latest_daily_date = str(latest["date"])
+            if w_ma5 > w_ma10 > w_ma20:
+                w_trend = "周线多头排列 (中线生命线健康上行)"
+            elif w_close >= w_ma20:
+                if w_ma5 >= w_ma10:
+                    w_trend = "周线突破站稳MA20生命线 (中线趋势修复转强)"
+                else:
+                    w_trend = "周线反弹站上MA20生命线 (均线逐步筑底企稳)"
+            elif w_ma5 < w_ma10 < w_ma20 and w_close < w_ma20:
+                w_trend = "周线空头向下 (处于周MA20生命线下方弱势寻底)"
+            else:
+                w_trend = "周线震荡蓄势整理"
+            w_macd_dif = round(float(w_latest.get("macd_dif") or 0.0), 3)
+            w_macd_dea = round(float(w_latest.get("macd_dea") or 0.0), 3)
             w_macd_hist = round(float(w_latest.get("macd_hist") or 0.0), 3)
-            w_macd_status = "周线MACD零轴上方多头红柱扩张" if w_macd_hist > 0 else "周线MACD绿柱或零轴下方调整"
+            w_above_zero_axis = bool(w_macd_dif > 0 and w_macd_dea > 0)
+            w_below_zero_axis = bool(w_macd_dif < 0 and w_macd_dea < 0)
+
+            if w_above_zero_axis:
+                if w_macd_hist > 0:
+                    w_macd_status = f"周线MACD双线稳居零轴上方(DIF:{w_macd_dif:+.2f}, DEA:{w_macd_dea:+.2f})，多头红柱持续扩张"
+                else:
+                    w_macd_status = f"周线MACD位于零轴上方多头强势区(DIF:{w_macd_dif:+.2f}, DEA:{w_macd_dea:+.2f})，多头绿柱回调洗盘"
+            elif w_below_zero_axis:
+                if w_macd_hist > 0:
+                    w_macd_status = f"周线MACD处于零轴下方超跌修复区(DIF:{w_macd_dif:+.2f}, DEA:{w_macd_dea:+.2f})，低位金叉反弹红柱(双线均在零轴下方，尚未有效站上零轴)"
+                else:
+                    w_macd_status = f"周线MACD双线运行于零轴下方空头弱势区(DIF:{w_macd_dif:+.2f}, DEA:{w_macd_dea:+.2f})，空头绿柱寻底"
+            else:
+                if w_macd_hist > 0:
+                    w_macd_status = f"周线MACD正尝试上穿零轴突破转强(DIF:{w_macd_dif:+.2f}, DEA:{w_macd_dea:+.2f})，红柱向上发力"
+                else:
+                    w_macd_status = f"周线MACD在零轴分水岭附近震荡反复(DIF:{w_macd_dif:+.2f}, DEA:{w_macd_dea:+.2f})"
 
             recent_4_weeks = []
-            for _, r in df_weekly.tail(4).iterrows():
+            tail_weeks = df_weekly.tail(4).reset_index(drop=True)
+            for idx, r in tail_weeks.iterrows():
+                is_last = (idx == len(tail_weeks) - 1)
+                r_date = str(r["date"])
+                if is_last and r_date >= latest_daily_date:
+                    date_label = f"{latest_daily_date}(本周动态)"
+                else:
+                    date_label = r_date
                 recent_4_weeks.append({
-                    "week_end": str(r["date"]),
+                    "week_end": date_label,
                     "close": round(float(r["close"]), 2),
                     "pct_chg": f"{float(r.get('pct_chg', 0.0)):+.2f}%"
                 })
@@ -1021,6 +1153,10 @@ class MarketDataService:
                 "weekly_ma20_lifeline": w_ma20,
                 "above_weekly_ma20": w_above_ma20,
                 "weekly_trend": w_trend,
+                "weekly_macd_dif": w_macd_dif,
+                "weekly_macd_dea": w_macd_dea,
+                "weekly_macd_hist": w_macd_hist,
+                "above_weekly_zero_axis": w_above_zero_axis,
                 "weekly_macd_status": w_macd_status,
                 "recent_4_weeks": recent_4_weeks
             }
@@ -1118,7 +1254,8 @@ class MarketDataService:
         prices = [base_price]
         for _ in range(len(valid_dates) - 1):
             change = np.random.normal(0.001, 0.02)
-            prices.append(prices[-1] * (1 + change))
+            prices.append(prices[-1] / (1 + change))
+        prices.reverse()
             
         records = []
         for i, date in enumerate(valid_dates):
@@ -1136,7 +1273,9 @@ class MarketDataService:
                 "pct_chg": pct_chg, "turnover": round(np.random.uniform(0.5, 4.0), 2)
             })
             
-        return pd.DataFrame(records)
+        res_df = pd.DataFrame(records)
+        res_df.attrs["is_mock"] = True
+        return res_df
 
     @classmethod
     def get_market_macro_context(cls) -> Dict[str, Any]:
@@ -1224,29 +1363,26 @@ class MarketDataService:
                 {"name": "新能源汽车", "pct_chg": "+1.20%", "pct_num": 1.20}
             ]
 
-        # 3. Sina Financial Roll News Headlines
+        # 3. Professional 7x24 Financial & Market News Headlines (财联社电报优先)
+        context["latest_news_detail"] = []
         try:
-            import re
-            url_news = "https://feed.mix.sina.com.cn/api/roll/get?pageid=155&lid=1686&num=6"
-            req = urllib.request.Request(url_news, headers={'User-Agent': 'Mozilla/5.0'})
-            res_raw = urllib.request.urlopen(req, timeout=3).read().decode('utf-8', errors='ignore')
-            data = json.loads(res_raw)
-            items = data.get("result", {}).get("data", []) or []
-            for item in items:
-                t = item.get("title")
-                if t:
-                    clean_t = re.sub(r'<[^>]+>', '', t).strip()
-                    if clean_t and len(clean_t) > 5:
-                        context["latest_news"].append(clean_t)
+            from services.news_service import NewsService
+            cls_news = NewsService.get_cls_telegraph_news(limit=15)
+            for item in cls_news:
+                context["latest_news_detail"].append(item)
+                # Backward-compatible formatted string
+                imp_badge = " [🔥重点]" if item.get("is_important") else ""
+                formatted_str = f"[{item.get('time', '')} 财联社{imp_badge}] {item.get('title', '')}"
+                context["latest_news"].append(formatted_str)
         except Exception as e:
-            logger.warning(f"Error fetching financial news: {e}")
+            logger.warning(f"Error fetching telegraph news from NewsService: {e}")
 
         if not context["latest_news"]:
             context["meta"]["fallback_sections"].append("快讯")
             context["latest_news"] = [
-                "央行维持流动性合理充裕，多重政策利好提振市场信心",
-                "科技与高股息板块获主力资金持续净流入",
-                "主力资金聚焦核心龙头，多只热门 ETF 获买盘加仓"
+                "[财联社] 央行维持流动性合理充裕，多重政策利好提振市场信心",
+                "[财联社] 科技与高股息板块获主力资金持续净流入",
+                "[财联社] 主力资金聚焦核心龙头，多只热门 ETF 获买盘加仓"
             ]
 
         if context["meta"]["fallback_sections"]:
@@ -1259,10 +1395,26 @@ class MarketDataService:
         indices_list = context.get("indices", [])
         sectors_list = context.get("hot_sectors", [])
         news_list = context.get("latest_news", [])
+        news_detail = context.get("latest_news_detail", [])
 
         indices_str = " | ".join([f"**{i['name']}**: {i['price']} ({i['pct_chg']})" for i in indices_list])
         sectors_str = "、".join([f"**{s['name']}** ({s['pct_chg']})" for s in sectors_list[:6]])
-        news_str = "\n".join([f"- {n}" for n in news_list[:5]])
+        
+        # Build richer news lines for LLM if detail available
+        if news_detail:
+            news_lines = []
+            for n in news_detail[:8]:
+                imp = " [重磅关注]" if n.get("is_important") else ""
+                t = n.get("title", "")
+                c = n.get("content", "")
+                line = f"- **[{n.get('time', '')} {n.get('source', '财联社')}{imp}]**: {t}"
+                if c and c != t and len(c) > len(t):
+                    line += f" （提要：{c[:80]}...）"
+                news_lines.append(line)
+            news_str = "\n".join(news_lines)
+        else:
+            news_str = "\n".join([f"- {n}" for n in news_list[:8]])
+
         meta = context.get("meta", {})
         fallback_sections = meta.get("fallback_sections", [])
 
@@ -1279,7 +1431,7 @@ class MarketDataService:
             if fallback_sections else ""
         )
 
-        block = f"""## 🌐 【全市场大盘情绪、领涨热点板块与宏观新闻背景】
+        block = f"""## 🌐 【全市场大盘情绪、领涨热点板块与权威财经消息面（财联社7x24H）】
 {market_session_note}
 ### 📊 1. 大盘主要指数表现 (基准交易日: {last_trade_date})：
 {indices_str}
@@ -1287,7 +1439,7 @@ class MarketDataService:
 ### 🔥 2. 当前主力资金领涨与最热板块：
 {sectors_str}
 
-### 📰 3. 最新财经与市场重大新闻消息面：
+### 📰 3. 权威财经一手快讯与政策动向（财联社实时电报）：
 {news_str}
 {data_quality_note}
 """

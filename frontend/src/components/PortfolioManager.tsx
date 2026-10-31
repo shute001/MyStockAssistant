@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, Upload, Trash2, Clipboard, FileText, Check, FolderPlus, Edit3, Layers, ArrowUpDown, ArrowUp, ArrowDown, MoveRight, AlertTriangle, Archive, X, Tag, PlusCircle, BookmarkCheck, Target, ShieldAlert, Bell } from 'lucide-react';
+import { Plus, Upload, Trash2, Clipboard, FileText, Check, FolderPlus, Edit3, Layers, ArrowUpDown, ArrowUp, ArrowDown, MoveRight, AlertTriangle, Archive, X, Tag, PlusCircle, BookmarkCheck, Target, ShieldAlert, Bell, Search } from 'lucide-react';
 import { PositionItem, WatchlistItem } from '../types';
 import { AccountFundBar } from './AccountFundBar';
 import { StopLossModal } from './StopLossModal';
@@ -129,14 +129,54 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     return Array.from(set);
   }, [categoryStats]);
 
-  // Filtered Watchlists by Selected Sector Tab
+  // Quick Search & Filter State
+  const [searchKeyword, setSearchKeyword] = useState<string>('');
+  const [jumpPageInput, setJumpPageInput] = useState<string>('');
+
+  // Filtered Watchlists by Selected Sector Tab & Search
   const filteredWatchlists = useMemo(() => {
-    if (selectedCategory === 'ALL') return watchlists;
-    return watchlists.filter((w) => {
-      const cats = getWatchlistCategories(w.category);
-      return cats.includes(selectedCategory);
-    });
-  }, [watchlists, selectedCategory]);
+    let list = watchlists;
+    if (selectedCategory !== 'ALL') {
+      list = list.filter((w) => {
+        const cats = getWatchlistCategories(w.category);
+        return cats.includes(selectedCategory);
+      });
+    }
+    if (searchKeyword.trim()) {
+      const q = searchKeyword.trim().toLowerCase();
+      list = list.filter((w) =>
+        (w.symbol && w.symbol.toLowerCase().includes(q)) ||
+        (w.name && w.name.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [watchlists, selectedCategory, searchKeyword]);
+
+  // Filtered Positions by Search
+  const filteredPositions = useMemo(() => {
+    let list = positions;
+    if (searchKeyword.trim()) {
+      const q = searchKeyword.trim().toLowerCase();
+      list = list.filter((p) =>
+        (p.symbol && p.symbol.toLowerCase().includes(q)) ||
+        (p.name && p.name.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [positions, searchKeyword]);
+
+  // Filtered Cleared Positions by Search
+  const filteredClearedPositions = useMemo(() => {
+    let list = clearedPositions;
+    if (searchKeyword.trim()) {
+      const q = searchKeyword.trim().toLowerCase();
+      list = list.filter((p) =>
+        (p.symbol && p.symbol.toLowerCase().includes(q)) ||
+        (p.name && p.name.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [clearedPositions, searchKeyword]);
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -200,7 +240,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
   // Sorted Positions
   const sortedPositions = useMemo(() => {
-    let list = [...positions];
+    let list = [...filteredPositions];
     if (!sortField) return list;
 
     list.sort((a: any, b: any) => {
@@ -224,44 +264,74 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     });
 
     return list;
-  }, [positions, sortField, sortOrder]);
+  }, [filteredPositions, sortField, sortOrder]);
 
-  // Pagination State for Positions & Watchlists
+  // Pagination State for Positions, Watchlists & Cleared
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(15);
+  const [pageSize, setPageSize] = useState<number>(30);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab, sortField, sortOrder, selectedCategory, pageSize]);
+    setJumpPageInput('');
+  }, [activeTab, sortField, sortOrder, selectedCategory, pageSize, searchKeyword]);
+
+  const totalItems = useMemo(() => {
+    if (activeTab === 'position') return sortedPositions.length;
+    if (activeTab === 'watchlist') return sortedWatchlists.length;
+    return filteredClearedPositions.length;
+  }, [activeTab, sortedPositions.length, sortedWatchlists.length, filteredClearedPositions.length]);
+
+  const totalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(totalItems / pageSize));
+  }, [totalItems, pageSize]);
 
   const paginatedPositions = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return sortedPositions.slice(start, start + pageSize);
   }, [sortedPositions, currentPage, pageSize]);
 
-  const totalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(sortedPositions.length / pageSize));
-  }, [sortedPositions.length, pageSize]);
+  const paginatedWatchlists = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return sortedWatchlists.slice(start, start + pageSize);
+  }, [sortedWatchlists, currentPage, pageSize]);
 
-  // Checkbox selection helpers
-  const currentVisibleItems = activeTab === 'position' ? paginatedPositions : sortedWatchlists;
-  const isAllSelected = currentVisibleItems.length > 0 && currentVisibleItems.every((item) => selectedIds.includes(item.id));
+  const paginatedClearedPositions = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredClearedPositions.slice(start, start + pageSize);
+  }, [filteredClearedPositions, currentPage, pageSize]);
+
+  // Checkbox selection helpers with O(1) Set lookup
+  const currentVisibleItems = useMemo(() => {
+    if (activeTab === 'position') return paginatedPositions;
+    if (activeTab === 'watchlist') return paginatedWatchlists;
+    return paginatedClearedPositions;
+  }, [activeTab, paginatedPositions, paginatedWatchlists, paginatedClearedPositions]);
+
+  const selectedIdsSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  const isAllSelected = currentVisibleItems.length > 0 && currentVisibleItems.every((item) => selectedIdsSet.has(item.id));
 
   const toggleSelectAll = () => {
     if (isAllSelected) {
-      setSelectedIds([]);
+      const currentIds = new Set(currentVisibleItems.map((item) => item.id));
+      setSelectedIds(selectedIds.filter((id) => !currentIds.has(id)));
     } else {
-      setSelectedIds(currentVisibleItems.map((item) => item.id));
+      const newIds = Array.from(new Set([...selectedIds, ...currentVisibleItems.map((item) => item.id)]));
+      setSelectedIds(newIds);
     }
   };
 
-
   const toggleSelectId = (id: number) => {
-    if (selectedIds.includes(id)) {
+    if (selectedIdsSet.has(id)) {
       setSelectedIds(selectedIds.filter((i) => i !== id));
     } else {
       setSelectedIds([...selectedIds, id]);
     }
+  };
+
+  const selectAllMatchingItems = () => {
+    const all = activeTab === 'position' ? sortedPositions : activeTab === 'watchlist' ? sortedWatchlists : filteredClearedPositions;
+    setSelectedIds(all.map((item) => item.id));
   };
 
   // Batch Delete Actions
@@ -580,6 +650,112 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
     return positions.filter(p => p.current_volume <= 0).length;
   }, [positions]);
 
+  const renderPaginationBar = () => {
+    if (totalItems === 0) return null;
+    const startIdx = (currentPage - 1) * pageSize + 1;
+    const endIdx = Math.min(currentPage * pageSize, totalItems);
+
+    const handleJumpPage = (e: React.FormEvent) => {
+      e.preventDefault();
+      const pageNum = parseInt(jumpPageInput, 10);
+      if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= totalPages) {
+        setCurrentPage(pageNum);
+      }
+    };
+
+    return (
+      <div className="mt-4 pt-3 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400 select-none">
+        <div className="flex flex-wrap items-center gap-3">
+          <span>
+            显示第 <strong className="text-slate-200 font-mono">{startIdx}</strong> 到 <strong className="text-slate-200 font-mono">{endIdx}</strong> 条，
+            共 <strong className="text-indigo-400 font-mono">{totalItems}</strong> 只标的
+            {searchKeyword.trim() && (
+              <span className="ml-1 text-slate-400">
+                (已筛选，原板块共 {activeTab === 'watchlist' ? (selectedCategory === 'ALL' ? watchlists.length : (categoryStats.find(c => c.name === selectedCategory)?.count || 0)) : positions.length} 只)
+              </span>
+            )}
+          </span>
+          <div className="flex items-center space-x-1.5 border-l border-slate-800 pl-3">
+            <span>每页：</span>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="bg-slate-950 border border-slate-800 text-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500 font-mono cursor-pointer"
+            >
+              <option value={15}>15 条/页</option>
+              <option value={30}>30 条/页</option>
+              <option value={50}>50 条/页</option>
+              <option value={100}>100 条/页</option>
+              <option value={200}>200 条/页</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center space-x-1">
+            <button
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+              className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-30 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
+            >
+              首页
+            </button>
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-30 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
+            >
+              上一页
+            </button>
+            
+            <div className="px-3 py-1 font-mono text-slate-300 flex items-center space-x-1 bg-slate-950/80 border border-slate-800/80 rounded">
+              <span className="text-indigo-400 font-bold">{currentPage}</span>
+              <span className="text-slate-500">/</span>
+              <span>{totalPages}</span>
+            </div>
+
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-30 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
+            >
+              下一页
+            </button>
+            <button
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+              className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-30 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
+            >
+              末页
+            </button>
+          </div>
+
+          {totalPages > 1 && (
+            <form onSubmit={handleJumpPage} className="flex items-center space-x-1 border-l border-slate-800 pl-2">
+              <span className="text-[11px] text-slate-500">跳至</span>
+              <input
+                type="number"
+                min={1}
+                max={totalPages}
+                value={jumpPageInput}
+                onChange={(e) => setJumpPageInput(e.target.value)}
+                placeholder={String(currentPage)}
+                className="w-12 bg-slate-950 border border-slate-800 rounded px-1.5 py-1 text-xs text-center text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
+              />
+              <span className="text-[11px] text-slate-500">页</span>
+              <button
+                type="submit"
+                className="px-2 py-1 bg-slate-900 hover:bg-indigo-600 border border-slate-700 hover:border-indigo-500 text-slate-300 hover:text-white rounded text-xs transition-colors"
+              >
+                跳转
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Account Fund Metrics Bar */}
@@ -617,10 +793,10 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
             <button
               onClick={onOpenAlertCenter}
               className="px-3.5 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all text-slate-400 hover:text-amber-300 hover:bg-slate-900 flex items-center space-x-1.5"
-              title="统一查看所有股票触发的止损止盈预警与提醒历史"
+              title="统一新增、修改、删除预警监控规则与查看预警通知历史"
             >
               <Bell className="w-3.5 h-3.5 text-amber-400" />
-              <span>🔔 预警提醒中心</span>
+              <span>🔔 预警规则与通知中心</span>
             </button>
           )}
         </div>
@@ -748,11 +924,20 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
       {/* Batch Action Toolbar (Visible when 1 or more checkboxes are checked) */}
       {selectedIds.length > 0 && (
         <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-950 border border-indigo-700/50 rounded-2xl p-3 px-5 flex flex-wrap items-center justify-between gap-4 shadow-xl">
-          <div className="flex items-center space-x-3">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
               <Check className="w-4 h-4 text-indigo-400" />
               已选中 <strong className="text-white text-sm font-mono">{selectedIds.length}</strong> 项股票/基金
             </span>
+            {selectedIds.length < totalItems && (
+              <button
+                type="button"
+                onClick={selectAllMatchingItems}
+                className="text-xs text-indigo-400 hover:text-indigo-200 underline underline-offset-2 ml-1 cursor-pointer transition-colors"
+              >
+                选择全部 {totalItems} 只标的
+              </button>
+            )}
           </div>
 
           <div className="flex items-center space-x-2.5">
@@ -796,7 +981,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
             <button
               onClick={handleBatchDelete}
-              className="px-4 py-1.5 bg-red-600/90 hover:bg-red-500 text-white font-semibold text-xs rounded-xl shadow-md transition-all flex items-center space-x-1"
+              className="px-4 py-1.5 bg-red-600/90 hover:bg-red-500 text-white font-semibold text-xs rounded-xl shadow-md transition-all flex items-center space-x-1 cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>批量删除选中项 ({selectedIds.length})</span>
@@ -804,7 +989,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
 
             <button
               onClick={() => setSelectedIds([])}
-              className="px-3 py-1.5 bg-slate-800 text-slate-300 hover:text-white text-xs font-medium rounded-xl border border-slate-700"
+              className="px-3 py-1.5 bg-slate-800 text-slate-300 hover:text-white text-xs font-medium rounded-xl border border-slate-700 cursor-pointer"
             >
               取消全选
             </button>
@@ -815,7 +1000,46 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
       {/* Main Table & Add Form Area */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Table View (3 cols) */}
-        <div className="surface-card lg:col-span-3 rounded-2xl p-4 sm:p-6">
+        <div className="surface-card lg:col-span-3 rounded-2xl p-4 sm:p-6 space-y-4">
+          {/* Table Header Filter Toolbar */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+            <div className="flex items-center space-x-2 text-xs font-semibold text-slate-300">
+              {activeTab === 'position' && (
+                <span>💼 当前持仓列表 (共 <strong className="text-indigo-400 font-mono">{positions.length}</strong> 只)</span>
+              )}
+              {activeTab === 'cleared' && (
+                <span>📜 历史清仓归档 (共 <strong className="text-purple-400 font-mono">{clearedPositions.length}</strong> 只)</span>
+              )}
+              {activeTab === 'watchlist' && (
+                <span>
+                  🌐 自选标的列表 · <strong className="text-indigo-400">{selectedCategory === 'ALL' ? '全部板块' : selectedCategory}</strong> (共 <strong className="text-indigo-400 font-mono">{filteredWatchlists.length}</strong> 只)
+                </span>
+              )}
+            </div>
+
+            {/* Quick Search Box */}
+            <div className="relative flex items-center min-w-[220px] sm:w-64">
+              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 pointer-events-none" />
+              <input
+                type="text"
+                value={searchKeyword}
+                onChange={(e) => setSearchKeyword(e.target.value)}
+                placeholder="搜索代码或名称 (如 600519)..."
+                className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-indigo-500 rounded-xl pl-8 pr-7 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none transition-all"
+              />
+              {searchKeyword && (
+                <button
+                  type="button"
+                  onClick={() => setSearchKeyword('')}
+                  className="absolute right-2 text-slate-500 hover:text-slate-300 p-0.5"
+                  title="清空搜索"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
           {activeTab === 'position' ? (
             <div className="overflow-x-auto rounded-xl border border-slate-800 shadow-inner">
               <table className="w-full text-left text-xs whitespace-nowrap">
@@ -907,178 +1131,142 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/80 bg-slate-900/60 font-mono text-[12px]">
-                  {paginatedPositions.map((pos) => {
-                    const isProfit = pos.profit_loss >= 0;
-                    const isTodayProfit = (pos.today_profit_loss || 0) >= 0;
-                    return (
-                      <tr key={pos.id} className={`hover:bg-slate-800/60 transition-colors ${selectedIds.includes(pos.id) ? 'bg-indigo-950/40' : ''}`}>
-                        <td className="py-3 px-2 text-center">
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.includes(pos.id)}
-                            onChange={() => toggleSelectId(pos.id)}
-                            className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 cursor-pointer"
-                          />
-                        </td>
-                        <td className="py-3 px-3 text-slate-300 font-semibold">{pos.symbol}</td>
-                        <td
-                          onClick={() => onSelectStock(pos.symbol)}
-                          className="py-3 px-3 font-sans font-bold text-slate-100 hover:text-indigo-400 cursor-pointer flex items-center space-x-1.5"
-                        >
-                          <span>{pos.name}</span>
-                          {(pos.symbol.startsWith('5') || pos.symbol.startsWith('1') || pos.name.includes('ETF') || pos.name.includes('基金')) && (
-                            <span className="px-1.5 py-0.5 text-[9px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/50 rounded">
-                              ETF
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 text-right text-slate-200">{pos.current_volume}</td>
-                        <td className="py-3 px-3 text-right text-slate-300">{pos.available_volume ?? pos.current_volume}</td>
-                        <td className="py-3 px-3 text-right text-slate-300">{pos.cost_price?.toFixed(3)}</td>
-                        <td className="py-3 px-3 text-right font-bold text-slate-100">{pos.current_price?.toFixed(3)}</td>
-                        <td className={`py-3 px-3 text-right font-bold ${isProfit ? 'text-red-400' : 'text-emerald-400'}`}>
-                          {isProfit ? '+' : ''}{pos.profit_loss?.toFixed(2)}
-                        </td>
-                        <td className={`py-3 px-3 text-right font-bold ${isProfit ? 'text-red-400' : 'text-emerald-400'}`}>
-                          {isProfit ? '+' : ''}{pos.profit_ratio?.toFixed(2)}%
-                        </td>
-                        <td className={`py-3 px-3 text-right font-bold ${isTodayProfit ? 'text-red-400' : 'text-emerald-400'}`}>
-                          {isTodayProfit ? '+' : ''}{pos.today_profit_loss?.toFixed(2)}
-                        </td>
-                        <td className={`py-3 px-3 text-right font-bold ${isTodayProfit ? 'text-red-400' : 'text-emerald-400'}`}>
-                          {isTodayProfit ? '+' : ''}{pos.today_profit_loss_ratio?.toFixed(2)}%
-                        </td>
-                        <td className="py-3 px-3 text-right font-bold text-slate-100">{pos.market_value?.toFixed(2)}</td>
-                        <td className="py-3 px-3 text-right font-semibold text-indigo-300">{pos.position_weight?.toFixed(2)}%</td>
-                        <td className="py-3 px-3 text-center font-sans text-xs text-slate-400">{pos.market_name || (pos.symbol.startsWith('6') ? '上海A股' : '深圳A股')}</td>
-                        <td className="py-3 px-2 text-center font-sans">
-                          <div className="inline-flex flex-col items-center">
-                            <select
-                              value={getHorizonBadge(pos.strategy_tag).key}
-                              onChange={(e) => handleUpdateStrategyTag(pos.id, e.target.value)}
-                              className={`text-[11px] font-semibold rounded-lg px-2 py-0.5 border cursor-pointer focus:outline-none transition-all ${getHorizonBadge(pos.strategy_tag).colorClass}`}
-                              title="点击快速调整该股票的投资周期定位"
+                  {paginatedPositions.length === 0 ? (
+                    <tr>
+                      <td colSpan={17} className="py-12 text-center text-xs text-slate-500 font-sans">
+                        {searchKeyword.trim() ? (
+                          <div className="flex flex-col items-center justify-center space-y-2">
+                            <span>未找到包含 “<strong className="text-indigo-300">{searchKeyword}</strong>” 的持仓股票</span>
+                            <button
+                              type="button"
+                              onClick={() => setSearchKeyword('')}
+                              className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs"
                             >
-                              {INVESTMENT_HORIZONS.map((h) => (
-                                <option key={h.key} value={h.key} className="bg-slate-900 text-slate-100 font-sans">
-                                  {h.label}
-                                </option>
-                              ))}
-                            </select>
-                            {pos.strategy_tag?.includes('短') && (pos.profit_ratio <= -4 || (pos.pct_chg && parseFloat(pos.pct_chg) <= -3)) && (
-                              <span className="text-[10px] text-amber-400 font-bold mt-0.5 animate-pulse" title="短线标的已达破位警戒线，请严格防守或止损">
-                                ⚠️短线防破位
-                              </span>
-                            )}
-                            {(pos.strategy_tag?.includes('长') || pos.strategy_tag?.includes('定投')) && pos.profit_ratio < 0 && (
-                              <span className="text-[10px] text-emerald-400 font-medium mt-0.5" title="长线定投标的处于成本线下方，进入估值吸筹区间">
-                                🌱定投加仓位
-                              </span>
-                            )}
+                              清空搜索条件
+                            </button>
                           </div>
-                        </td>
-                        <td className="py-3 px-3 text-center font-sans">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedStopLossPosition(pos);
-                            }}
-                            className={`px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1 mx-auto transition-all shadow-sm ${
-                              pos.condition_count && pos.condition_count > 0
-                                ? 'bg-gradient-to-r from-indigo-950 via-purple-950 to-indigo-950 text-indigo-200 border border-indigo-500/60 hover:border-indigo-400 hover:shadow-indigo-500/20'
-                                : 'bg-slate-950 text-slate-400 border border-slate-800 hover:border-slate-700 hover:text-slate-200'
-                            }`}
-                            title="设置或查看该股票的止损止盈、均线与MACD监控条件"
+                        ) : (
+                          <span>暂无持仓股票，请前往导入或手动新增</span>
+                        )}
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedPositions.map((pos) => {
+                      const isProfit = pos.profit_loss >= 0;
+                      const isTodayProfit = (pos.today_profit_loss || 0) >= 0;
+                      return (
+                        <tr key={pos.id} className={`hover:bg-slate-800/60 transition-colors ${selectedIdsSet.has(pos.id) ? 'bg-indigo-950/40' : ''}`}>
+                          <td className="py-3 px-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={selectedIdsSet.has(pos.id)}
+                              onChange={() => toggleSelectId(pos.id)}
+                              className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 cursor-pointer"
+                            />
+                          </td>
+                          <td className="py-3 px-3 text-slate-300 font-semibold">{pos.symbol}</td>
+                          <td
+                            onClick={() => onSelectStock(pos.symbol)}
+                            className="py-3 px-3 font-sans font-bold text-slate-100 hover:text-indigo-400 cursor-pointer flex items-center space-x-1.5"
                           >
-                            {pos.condition_count && pos.condition_count > 0 ? (
-                              <>
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                <span className="font-mono text-emerald-300 font-bold">{pos.condition_count}</span>
-                                <span>条监控</span>
-                              </>
-                            ) : (
-                              <>
-                                <Target className="w-3 h-3 text-slate-500" />
-                                <span>设条件</span>
-                              </>
+                            <span>{pos.name}</span>
+                            {(pos.symbol.startsWith('5') || pos.symbol.startsWith('1') || pos.name.includes('ETF') || pos.name.includes('基金')) && (
+                              <span className="px-1.5 py-0.5 text-[9px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/50 rounded">
+                                ETF
+                              </span>
                             )}
-                          </button>
-                        </td>
-                        <td className="py-3 px-3 text-center">
-                          <button
-                            onClick={() => handleDeletePosition(pos.id)}
-                            className="p-1 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
-                            title="删除持仓"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                          </td>
+                          <td className="py-3 px-3 text-right text-slate-200">{pos.current_volume}</td>
+                          <td className="py-3 px-3 text-right text-slate-300">{pos.available_volume ?? pos.current_volume}</td>
+                          <td className="py-3 px-3 text-right text-slate-300">{pos.cost_price?.toFixed(3)}</td>
+                          <td className="py-3 px-3 text-right font-bold text-slate-100">{pos.current_price?.toFixed(3)}</td>
+                          <td className={`py-3 px-3 text-right font-bold ${isProfit ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {isProfit ? '+' : ''}{pos.profit_loss?.toFixed(2)}
+                          </td>
+                          <td className={`py-3 px-3 text-right font-bold ${isProfit ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {isProfit ? '+' : ''}{pos.profit_ratio?.toFixed(2)}%
+                          </td>
+                          <td className={`py-3 px-3 text-right font-bold ${isTodayProfit ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {isTodayProfit ? '+' : ''}{pos.today_profit_loss?.toFixed(2)}
+                          </td>
+                          <td className={`py-3 px-3 text-right font-bold ${isTodayProfit ? 'text-red-400' : 'text-emerald-400'}`}>
+                            {isTodayProfit ? '+' : ''}{pos.today_profit_loss_ratio?.toFixed(2)}%
+                          </td>
+                          <td className="py-3 px-3 text-right font-bold text-slate-100">{pos.market_value?.toFixed(2)}</td>
+                          <td className="py-3 px-3 text-right font-semibold text-indigo-300">{pos.position_weight?.toFixed(2)}%</td>
+                          <td className="py-3 px-3 text-center font-sans text-xs text-slate-400">{pos.market_name || (pos.symbol.startsWith('6') ? '上海A股' : '深圳A股')}</td>
+                          <td className="py-3 px-2 text-center font-sans">
+                            <div className="inline-flex flex-col items-center">
+                              <select
+                                value={getHorizonBadge(pos.strategy_tag).key}
+                                onChange={(e) => handleUpdateStrategyTag(pos.id, e.target.value)}
+                                className={`text-[11px] font-semibold rounded-lg px-2 py-0.5 border cursor-pointer focus:outline-none transition-all ${getHorizonBadge(pos.strategy_tag).colorClass}`}
+                                title="点击快速调整该股票的投资周期定位"
+                              >
+                                {INVESTMENT_HORIZONS.map((h) => (
+                                  <option key={h.key} value={h.key} className="bg-slate-900 text-slate-100 font-sans">
+                                    {h.label}
+                                  </option>
+                                ))}
+                              </select>
+                              {pos.strategy_tag?.includes('短') && (pos.profit_ratio <= -4 || (pos.pct_chg && parseFloat(pos.pct_chg) <= -3)) && (
+                                <span className="text-[10px] text-amber-400 font-bold mt-0.5 animate-pulse" title="短线标的已达破位警戒线，请严格防守或止损">
+                                  ⚠️短线防破位
+                                </span>
+                              )}
+                              {(pos.strategy_tag?.includes('长') || pos.strategy_tag?.includes('定投')) && pos.profit_ratio < 0 && (
+                                <span className="text-[10px] text-emerald-400 font-medium mt-0.5" title="长线定投标的处于成本线下方，进入估值吸筹区间">
+                                  🌱定投加仓位
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-center font-sans">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedStopLossPosition(pos);
+                              }}
+                              className={`px-2.5 py-1 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1 mx-auto transition-all shadow-sm ${
+                                pos.condition_count && pos.condition_count > 0
+                                  ? 'bg-gradient-to-r from-indigo-950 via-purple-950 to-indigo-950 text-indigo-200 border border-indigo-500/60 hover:border-indigo-400 hover:shadow-indigo-500/20'
+                                  : 'bg-slate-950 text-slate-400 border border-slate-800 hover:border-slate-700 hover:text-slate-200'
+                              }`}
+                              title="设置或查看该股票的止损止盈、均线与MACD监控条件"
+                            >
+                              {pos.condition_count && pos.condition_count > 0 ? (
+                                <>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  <span className="font-mono text-emerald-300 font-bold">{pos.condition_count}</span>
+                                  <span>条监控</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Target className="w-3 h-3 text-slate-500" />
+                                  <span>设条件</span>
+                                </>
+                              )}
+                            </button>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <button
+                              onClick={() => handleDeletePosition(pos.id)}
+                              className="p-1 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded transition-colors"
+                              title="删除持仓"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
 
               {/* Physical Pagination Bar */}
-              <div className="mt-4 pt-3 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400 select-none">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span>
-                    显示第 <strong className="text-slate-200 font-mono">{sortedPositions.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}</strong> 到 <strong className="text-slate-200 font-mono">{Math.min(currentPage * pageSize, sortedPositions.length)}</strong> 条，共 <strong className="text-indigo-400 font-mono">{sortedPositions.length}</strong> 只股票
-                  </span>
-                  <div className="flex items-center space-x-1.5 border-l border-slate-800 pl-3">
-                    <span>每页显示：</span>
-                    <select
-                      value={pageSize}
-                      onChange={(e) => setPageSize(Number(e.target.value))}
-                      className="bg-slate-950 border border-slate-800 text-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500 font-mono cursor-pointer"
-                    >
-                      <option value={15}>15 条/页</option>
-                      <option value={30}>30 条/页</option>
-                      <option value={50}>50 条/页</option>
-                      <option value={100}>100 条/页</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-1">
-                  <button
-                    onClick={() => setCurrentPage(1)}
-                    disabled={currentPage === 1}
-                    className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-40 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
-                  >
-                    首页
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-40 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
-                  >
-                    上一页
-                  </button>
-                  
-                  <div className="px-3 py-1 font-mono text-slate-300 flex items-center space-x-1">
-                    <span className="text-indigo-400 font-bold">{currentPage}</span>
-                    <span>/</span>
-                    <span>{totalPages}</span>
-                  </div>
-
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-40 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
-                  >
-                    下一页
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(totalPages)}
-                    disabled={currentPage === totalPages}
-                    className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 disabled:opacity-40 disabled:hover:bg-slate-950 rounded text-slate-300 font-medium transition-colors"
-                  >
-                    末页
-                  </button>
-                </div>
-              </div>
+              {renderPaginationBar()}
             </div>
 
 
@@ -1144,14 +1332,14 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono text-xs">
-                  {clearedPositions.length === 0 ? (
+                  {paginatedClearedPositions.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-8 text-center text-xs text-slate-500 font-sans">
-                        暂无历史清仓归档记录
+                        {searchKeyword.trim() ? `未找到匹配 “${searchKeyword}” 的清仓记录` : '暂无历史清仓归档记录'}
                       </td>
                     </tr>
                   ) : (
-                    clearedPositions.map((pos) => {
+                    paginatedClearedPositions.map((pos) => {
                       const pnl = pos.profit_loss || 0;
                       const isWin = pnl >= 0;
                       return (
@@ -1203,6 +1391,7 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                   )}
                 </tbody>
               </table>
+              {renderPaginationBar()}
             </div>
           ) : (
 
@@ -1252,91 +1441,117 @@ export const PortfolioManager: React.FC<PortfolioManagerProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {sortedWatchlists.map((w) => (
-                    <tr key={w.id} className={`hover:bg-slate-800/50 transition-colors ${selectedIds.includes(w.id) ? 'bg-indigo-950/30' : ''}`}>
-                      <td className="py-3.5 px-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.includes(w.id)}
-                          onChange={() => toggleSelectId(w.id)}
-                          className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 cursor-pointer"
-                        />
-                      </td>
-                      <td
-                        onClick={() => onSelectStock(w.symbol)}
-                        className="py-3.5 px-4 font-medium text-slate-100 cursor-pointer"
-                      >
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-slate-100">{w.name}</span>
-                          {(w.symbol.startsWith('5') || w.symbol.startsWith('1') || w.name.includes('ETF') || w.name.includes('基金')) ? (
-                            <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/50 rounded-md">
-                              ETF基金
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-slate-800 text-slate-400 rounded-md">
-                              A股股票
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs font-mono text-slate-400">{w.symbol}</div>
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        {/* Multi-Sector Badges with Quick Remove and Manage Button */}
-                        <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[260px] mx-auto">
-                          {getWatchlistCategories(w.category).map((cat) => (
-                            <span
-                              key={cat}
-                              className="group inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg text-[11px] font-medium bg-indigo-950/90 text-indigo-200 border border-indigo-800/60 shadow-sm"
+                  {paginatedWatchlists.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-12 text-center text-xs text-slate-500 font-sans">
+                        {searchKeyword.trim() ? (
+                          <div className="flex flex-col items-center justify-center space-y-2">
+                            <span>未找到包含 “<strong className="text-indigo-300">{searchKeyword}</strong>” 的自选股票</span>
+                            <button
+                              type="button"
+                              onClick={() => setSearchKeyword('')}
+                              className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs"
                             >
-                              <span>{cat}</span>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveSingleCategory(w.id, cat, w.category);
-                                }}
-                                title={`从【${cat}】板块中移出`}
-                                className="opacity-60 hover:opacity-100 hover:text-red-400 transition-opacity ml-0.5"
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
-                            </span>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenCategoryModal(w);
-                            }}
-                            title="管理该股票归属的所有板块"
-                            className="inline-flex items-center space-x-0.5 px-1.5 py-0.5 rounded-lg text-[10px] text-slate-400 hover:text-indigo-300 hover:bg-slate-800/80 border border-dashed border-slate-700 hover:border-indigo-500/60 transition-all"
-                          >
-                            <Plus className="w-2.5 h-2.5" />
-                            <span>板块</span>
-                          </button>
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-semibold text-slate-100">
-                        ¥{w.current_price?.toFixed(w.current_price && w.current_price < 10 ? 3 : 2)}
-                      </td>
-                      <td className={`py-3.5 px-4 text-right font-mono font-semibold ${w.pct_chg.startsWith('+') ? 'text-red-400' : (w.pct_chg.startsWith('-') ? 'text-emerald-400' : 'text-slate-300')}`}>
-                        {w.pct_chg}
-                      </td>
-                      <td className="py-3.5 px-4 text-center text-xs text-slate-300">
-                        {w.ma_trend}
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <button
-                          onClick={() => handleDeleteWatchlist(w.id)}
-                          className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                              清空搜索条件
+                            </button>
+                          </div>
+                        ) : selectedCategory !== 'ALL' ? (
+                          <span>板块【<strong className="text-indigo-300">{selectedCategory}</strong>】暂无自选股</span>
+                        ) : (
+                          <span>暂无自选股票记录，请点击上方导入或手动新增</span>
+                        )}
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    paginatedWatchlists.map((w) => (
+                      <tr key={w.id} className={`hover:bg-slate-800/50 transition-colors ${selectedIdsSet.has(w.id) ? 'bg-indigo-950/30' : ''}`}>
+                        <td className="py-3.5 px-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedIdsSet.has(w.id)}
+                            onChange={() => toggleSelectId(w.id)}
+                            className="rounded border-slate-700 bg-slate-900 text-indigo-600 focus:ring-0 cursor-pointer"
+                          />
+                        </td>
+                        <td
+                          onClick={() => onSelectStock(w.symbol)}
+                          className="py-3.5 px-4 font-medium text-slate-100 cursor-pointer"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <span className="font-bold text-slate-100">{w.name}</span>
+                            {(w.symbol.startsWith('5') || w.symbol.startsWith('1') || w.name.includes('ETF') || w.name.includes('基金')) ? (
+                              <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-950/80 text-amber-300 border border-amber-800/50 rounded-md">
+                                ETF基金
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-slate-800 text-slate-400 rounded-md">
+                                A股股票
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs font-mono text-slate-400">{w.symbol}</div>
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          {/* Multi-Sector Badges with Quick Remove and Manage Button */}
+                          <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[260px] mx-auto">
+                            {getWatchlistCategories(w.category).map((cat) => (
+                              <span
+                                key={cat}
+                                className="group inline-flex items-center space-x-1 px-2 py-0.5 rounded-lg text-[11px] font-medium bg-indigo-950/90 text-indigo-200 border border-indigo-800/60 shadow-sm"
+                              >
+                                <span>{cat}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRemoveSingleCategory(w.id, cat, w.category);
+                                  }}
+                                  title={`从【${cat}】板块中移出`}
+                                  className="opacity-60 hover:opacity-100 hover:text-red-400 transition-opacity ml-0.5"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </span>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenCategoryModal(w);
+                              }}
+                              title="管理该股票归属的所有板块"
+                              className="inline-flex items-center space-x-0.5 px-1.5 py-0.5 rounded-lg text-[10px] text-slate-400 hover:text-indigo-300 hover:bg-slate-800/80 border border-dashed border-slate-700 hover:border-indigo-500/60 transition-all"
+                            >
+                              <Plus className="w-2.5 h-2.5" />
+                              <span>板块</span>
+                            </button>
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-semibold text-slate-100">
+                          ¥{w.current_price?.toFixed(w.current_price && w.current_price < 10 ? 3 : 2)}
+                        </td>
+                        <td className={`py-3.5 px-4 text-right font-mono font-semibold ${w.pct_chg.startsWith('+') ? 'text-red-400' : (w.pct_chg.startsWith('-') ? 'text-emerald-400' : 'text-slate-300')}`}>
+                          {w.pct_chg}
+                        </td>
+                        <td className="py-3.5 px-4 text-center text-xs text-slate-300">
+                          {w.ma_trend}
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <button
+                            onClick={() => handleDeleteWatchlist(w.id)}
+                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
+
+              {/* Physical Pagination Bar for Watchlist */}
+              {renderPaginationBar()}
             </div>
           )}
         </div>

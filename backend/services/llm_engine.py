@@ -55,16 +55,30 @@ class MultiLLMEngine:
         symbol: str, 
         name: str, 
         indicators: Dict[str, Any],
-        macro_context: Optional[Dict[str, Any]] = None
+        macro_context: Optional[Dict[str, Any]] = None,
+        stock_news_str: Optional[str] = None
     ) -> str:
         """Construct professional A-share single stock analysis prompt payload with macro & news context"""
         macro_block = MarketDataService.format_macro_prompt_block(macro_context) if macro_context else ""
+        
+        # Automatically fetch official stock news if not provided
+        if stock_news_str is None:
+            try:
+                from services.news_service import NewsService
+                stock_news_str = NewsService.format_stock_news_for_prompt(symbol, name=name, limit=6)
+            except Exception as e:
+                stock_news_str = f"- 暂未检索到【{name}】近期个股重大公告（消息面相对平稳）。"
 
         prompt = f"""# A股个股【{name} ({symbol})】AI量化操盘全维度诊断指令
 
-请作为资深 A 股量化风控专家，结合以下【全市场大盘情绪、领涨热点板块与新闻消息面】以及【该股票的实时技术指标】，为用户输出一份专业、客观、有纪律性的【单股AI深度诊断报告】。
+请作为资深 A 股量化风控专家，结合以下【全市场大盘情绪、领涨热点板块与新闻消息面】、【该股票的专属正规媒体报道与公告】以及【该股票的实时技术指标】，为用户输出一份专业、客观、有纪律性的【单股AI深度诊断报告】。
 
 {macro_block}
+
+---
+
+## 📌 【{name} ({symbol})】专属权威财经报道与重大公告（东方财富 / 证券时报 / 财联社电报）：
+{stock_news_str}
 
 ---
 
@@ -92,8 +106,9 @@ class MultiLLMEngine:
 - **月K线大级别估值与周期位置 (Monthly & Valuation)**:
   - 分析近 1 年历史价格分位数（当前处于 {indicators.get('monthly_context', {}).get('historical_1y_percentile', 'N/A')} 分位）与月线趋势（{indicators.get('monthly_context', {}).get('monthly_trend', 'N/A')}），判断中长线是否有充足的安全边际。
 
-### 📰 4. 板块热度与新闻消息面/催化因素剖析
-- 评价该标的所属板块在当前大盘中的热度及最新财经消息面催化。
+### 📰 4. 专属消息面催化与板块热度深度剖析
+- **【个股专属消息面研判】**: 严格结合上述提供的《证券时报》、东方财富及财联社关于【{name}】的最新真实报道和重大公告，明确指出当前消息面究竟是实质性利好（如业绩大增、大额订单、增持回购）、还是潜在利空风险（如股东减持、诉讼、业绩变脸），或仅为主力短期题材炒作。
+- **【板块与大盘热度共振】**: 评价该标的所属板块在当前大盘中的热度，分析消息面对股价短期爆发力与中长期价值重估的驱动强度。
 
 ### 🎯 5. 标的投资周期属性深度研判 (适合短线快进快出 vs 中长线波段定投)
 - **适合周期定性研判**: 明确判定【{name} ({symbol})】当前技术形态与估值阶段最适合哪类投资模式：
@@ -276,30 +291,37 @@ class MultiLLMEngine:
             return prompt
 
         # Case 2: Specific Sector / Category Diagnosis
-        if scope_label.endswith("板块专项") or (watchlist_data and not portfolio_data):
+        if "专项" in scope_label or "自选" in scope_label or (watchlist_data and not portfolio_data):
             prompt = f"""# A股【{scope_label}】AI量化操盘诊断指令
 
-请作为资深 A 股量化风控专家，结合以下【全市场大盘情绪、领涨热点板块与新闻消息面】以及【该板块的自选监控标的数据】，专门针对该板块的全部标的（共 {len(watchlist_data)} 只），生成一份专业、严谨且排版优雅的【{scope_label} AI 深度量化诊断报告】。
+请作为资深 A 股量化风控专家，结合以下【全市场大盘情绪、领涨热点板块与新闻消息面】以及【该标的池的量化技术数据】，专门针对该清单中的全部标的（共 {len(watchlist_data)} 只），生成一份专业、严谨且排版优雅的【{scope_label} AI 深度量化诊断报告】。
+
+【标的池定位与数据口径已知说明】：
+1. **标的池定位说明**：当前诊断池为用户设立的【{scope_label}】（若为自选策略池，标的通常包含不同行业的核心品种或主题ETF，属于策略监控组合而非单一行业板块，请从全维度宏观+多周期视角诊断，无需质疑行业分散性）。
+2. **多周期量化指标口径**：
+   - 日K摆动指标均采用中国A股标准口径（RSI采用Wilder指数平滑，KDJ为经典3K-2D，数值真实反映阶段超买超卖）。
+   - 周K线数据已完成多周期对账，未收盘的当前交易周已明确标注为【本周动态跟踪】。
+3. **建仓价指引**：若部分标的 `target_buy_price` 字段为空或为0，代表用户正在密切观察并寻求AI指导，请务必结合日线/周线支撑位给出**具体的建议低吸建仓区间与防守止损位**！
 
 {macro_block}
 
 ---
 
-## 📌 【{scope_label}】监控标的清单 (共 {len(watchlist_data)} 只，含目标价与日/周/月技术指标)：
+## 📌 【{scope_label}】监控标的清单 (共 {len(watchlist_data)} 只，含日/周/月多周期量化技术指标)：
 {json.dumps(watchlist_data, ensure_ascii=False, indent=2)}
 
 ---
 
 ## 请按以下 Markdown 结构生成诊断报告：
 
-### 📊 1. 板块热度与大盘情绪共振评估
-- 结合大盘整体走势与当前主力资金流向，评估该板块所处的主力周期位置（主升浪、分歧轮动、震荡筑底还是补跌）。
+### 📊 1. 观察池宏观环境与板块热度共振评估
+- 结合大盘整体走势与当前主力资金流向，评估池中各标的所处行业的市场热度与大盘顺势程度。
 
-### 🛡️ 2. 板块核心标的逐一AI深度诊断 (日线+周线+月线多周期共振视角)
-- 针对该板块中的全部 {len(watchlist_data)} 只自选标的逐一诊断，结合其【日K线多空形态与成交量】、【周K线 MA20 生命线与周 MACD 状态】以及【月K线历史估值分位数】，剖析动能并给出明确的建仓跟踪价位与防守线。
+### 🛡️ 2. 核心标的逐一AI深度诊断 (日线+周线+月线多周期共振视角)
+- 针对该清单中的全部 {len(watchlist_data)} 只自选标的逐一诊断，结合其【日K线多空形态与成交量】、【周K线 MA20 生命线与周 MACD 状态】以及【月K线历史估值分位数】，剖析动能并给出明确的建仓跟踪价位与防守线。
 
 ### ⚠️ 3. 风险警示与操盘纪律提醒
-- 给出 2-3 条当前市场环境下针对该板块的操作纪律。
+- 给出 2-3 条当前市场环境下针对该池内标的建仓或跟踪的操作纪律。
 """
             return prompt
 
@@ -411,7 +433,7 @@ class MultiLLMEngine:
 - **买入标准**:
   1. 日 K 线 MA5 > MA10 > MA20 多头排列，处于年线(MA250)上方或站稳 20 日均线；
   2. 顺势放量突破中长期箱体/颈线，或在上升通道中缩量回踩 MA20 生命线企稳收出反包阳线；
-  3. **【周K线强制多周期共振核验（一票否决制）】**: 必须深入查验数据中的 `weekly_context`！要求标的处于【周MA20生命线】上方或有效突破站稳（`above_weekly_ma20: true`），且周线多头排列或周MACD处于红柱扩张区。**若周线破位处于空头向下，哪怕日线短期反弹也一票否决，坚决不可推选为中线标的！**
+  3. **【周K线强制多周期共振核验（一票否决制）】**: 必须深入查验数据中的 `weekly_context`！要求标的处于【周MA20生命线】上方或有效突破站稳（`above_weekly_ma20: true`）。**请务必严格区分“周线双线在零轴上方”与“周线在零轴下方低位反弹红柱”**：若 `above_weekly_zero_axis: false`，说明周线 DIF/DEA 双线均处于零轴下方，仅属于超跌反弹或低位筑底修复，严禁在研报中声称“周线在零轴上方”！若周线破位处于空头向下，哪怕日线短期反弹也一票否决，坚决不可推选为中线标的！
 - **卖出与风控标准**:
   1. **以日/周 MA20 为移动防守生命线**，有效跌破 3 日不反包则纪律止损（风控位 6%~8%）；
   2. 目标盈利 20%~40%，随股价上涨抬升移动止盈防守线；跌破 MA60 趋势彻底走坏清仓。
@@ -445,6 +467,7 @@ class MultiLLMEngine:
 (严选 1~2 只最符合短线爆发特征的股票；若当前行情不适宜做短线，明确给出“短线风险提示，建议轻仓观望”)
 - 🎯 **精选标的**: 【股票名称 (代码)】 — 匹配战法: 如【主线龙头分歧低吸战法】
 - **量化评分与周期定位**: 88/100 | ⚡ 短线交易
+- **📰 权威消息面与公告避雷核查**: 引用该标的 `recent_news` 或财联社最新电报，核查确认无减持/暴雷利空（一票否决避雷通过），明确指出题材催化亮点与消息爆发力
 - **K 线形态与量价验证**: 结合近 10 日 K 线量比(vol_ratio)、日内涨跌、短期均线与摆动指标分析为什么适合短线
 - **大级别周线核验**: 确认周K线无大级别顶背离，为短线提供安全防护
 - **买卖操作与严苛风控**: 
@@ -457,6 +480,7 @@ class MultiLLMEngine:
 (严选 1~2 只处于良性多头趋势推进的股票或行业核心 ETF)
 - 🎯 **精选标的**: 【标的名称 (代码)】 — 匹配战法: 如【均线多头趋势回踩战法】 (注明资产类别: 股票 / 行业ETF)
 - **量化评分与周期定位**: 91/100 | 📈 中线波段
+- **📰 基本面催化与行业政策动向**: 结合其最新报道/公告与行业景气度，核查业绩增长确定性或核心政策扶持支撑
 - **周K线中线生命线与多周期共振**: 引用 `weekly_context` 详细说明周MA20生命线价格位置、当前股价与周MA20关系、周线多头排列及周MACD红柱支撑
 - **买卖操作与防守纪律**:
   - 建议建仓价格区间: ¥xx.xx ~ ¥xx.xx

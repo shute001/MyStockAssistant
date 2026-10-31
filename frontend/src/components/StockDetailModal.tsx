@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
-import { X, TrendingUp, Cpu, AlertTriangle } from 'lucide-react';
+import { X, TrendingUp, Cpu, AlertTriangle, Newspaper, RefreshCw, ExternalLink, Flame } from 'lucide-react';
 import { KLineRecord } from '../types';
 import axios from 'axios';
 
@@ -20,6 +20,8 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
   const [stockName, setStockName] = useState<string>('');
   const [tradeRecords, setTradeRecords] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [stockNews, setStockNews] = useState<any[]>([]);
+  const [isLoadingNews, setIsLoadingNews] = useState(false);
   const [dataHealth, setDataHealth] = useState({ status: 'unknown', source: '', updatedAt: '' });
 
   useEffect(() => {
@@ -34,6 +36,22 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       document.body.style.overflow = originalOverflow;
     };
   }, [onClose]);
+
+  const fetchStockNews = async (force: boolean = false) => {
+    setIsLoadingNews(true);
+    try {
+      const res = await axios.get(`/api/v1/stocks/${symbol}/news?limit=10${force ? '&force_refresh=true' : ''}`);
+      setStockNews(res.data?.items || []);
+    } catch (err) {
+      console.error('Error fetching stock news:', err);
+    } finally {
+      setIsLoadingNews(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStockNews();
+  }, [symbol]);
 
   useEffect(() => {
     const fetchKline = async () => {
@@ -277,7 +295,106 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
             <ReactECharts option={option} style={{ height: '100%', width: '100%' }} />
           </div>
         )}
-        {dataHealth.updatedAt && <p className="text-right text-[10px] text-slate-500">数据源：{dataHealth.source} · 更新于 {dataHealth.updatedAt} · <kbd className="font-mono text-slate-400">Esc</kbd> 退出</p>}
+        {/* Official News & Announcements Section */}
+        <div className="bg-slate-950/70 border border-slate-800/90 rounded-2xl p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-800/60 pb-2.5">
+            <div className="flex items-center space-x-2">
+              <div className="p-1.5 bg-rose-950/60 border border-rose-800/40 rounded-lg text-rose-400">
+                <Newspaper className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-xs sm:text-sm font-bold text-slate-200 flex items-center gap-1.5">
+                  <span>权威财经报道与重大公告</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-950/80 text-rose-300 border border-rose-700/50">
+                    财联社 / 东方财富 / 证券时报
+                  </span>
+                </h4>
+                <p className="text-[11px] text-slate-400">
+                  专业二级市场正规源 · 已同步赋能单股 AI 深度研判
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => fetchStockNews(true)}
+              disabled={isLoadingNews}
+              className="px-2.5 py-1 text-xs text-slate-300 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-700/60 rounded-lg flex items-center space-x-1 transition-colors"
+              title="刷新个股新闻"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingNews ? 'animate-spin text-indigo-400' : ''}`} />
+              <span className="hidden sm:inline">刷新资讯</span>
+            </button>
+          </div>
+
+          {/* News List */}
+          {isLoadingNews ? (
+            <div className="py-6 text-center text-xs text-slate-500">
+              正在检索【{stockName || symbol}】最新官方公告与财经新闻...
+            </div>
+          ) : stockNews.length === 0 ? (
+            <div className="py-6 text-center text-xs text-slate-500">
+              近期暂未检索到该股票的重大公告或新闻异动，消息面整体平稳。
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1 custom-scrollbar">
+              {stockNews.map((news, i) => (
+                <div
+                  key={i}
+                  className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition-all flex flex-col space-y-1 group"
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center space-x-2">
+                      <span className="font-mono text-[10px] text-slate-400">
+                        {news.publish_time}
+                      </span>
+                      <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-800 text-indigo-300 border border-slate-700/60">
+                        {news.source}
+                      </span>
+                      {news.is_important && (
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-950 text-rose-300 border border-rose-700/60">
+                          重点事项
+                        </span>
+                      )}
+                    </div>
+
+                    {news.url && (
+                      <a
+                        href={news.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-slate-400 group-hover:text-indigo-400 hover:underline text-[11px] flex items-center space-x-0.5"
+                      >
+                        <span>查看原文</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+
+                  <a
+                    href={news.url || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-semibold text-slate-200 group-hover:text-rose-300 transition-colors line-clamp-1"
+                  >
+                    {news.title}
+                  </a>
+
+                  {news.content && news.content !== news.title && (
+                    <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
+                      {news.content}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {dataHealth.updatedAt && (
+          <p className="text-right text-[10px] text-slate-500">
+            行情数据源：{dataHealth.source} · 更新于 {dataHealth.updatedAt} · <kbd className="font-mono text-slate-400">Esc</kbd> 退出
+          </p>
+        )}
       </div>
     </div>
   );

@@ -96,7 +96,8 @@ async def analyze_portfolio_stream(req: Optional[PortfolioAnalyzeRequest] = None
             raw_positions = []
             cat_name = scope.split("CATEGORY:", 1)[1]
             raw_watchlists = db.query(Watchlist).filter(Watchlist.category == cat_name).all()
-            scope_label = f"【{cat_name}】板块专项"
+            is_industry = any(kw in cat_name for kw in ["板块", "行业", "概念", "赛道", "半导体", "医药", "芯片", "新能源", "电力", "消费", "军工", "地产", "白酒"])
+            scope_label = f"【{cat_name}】板块专项" if is_industry else f"【{cat_name}】自选观察池"
         else:
             raw_positions = db.query(Position).filter(Position.current_volume > 0).all()
             raw_watchlists = db.query(Watchlist).all()
@@ -854,15 +855,20 @@ def auto_sync_screener_recommendations_to_watchlist(db: Session, report_text: st
 @router.post("/screener/run-stream")
 async def run_stock_screener_agent_stream(
     scope: Optional[str] = Query("ALL", description="Screening scope: ALL | SHORT_TERM | MID_TERM | LONG_TERM_ETF"),
+    explore: Optional[bool] = Query(False, description="是否启用动态探索/换一批模式"),
+    seed: Optional[int] = Query(None, description="随机种子，用于换一批轮换"),
     db: Session = Depends(get_db)
 ):
     """Stream Stock & ETF Screener Agent recommendation report with parallel indicators fetching & multi-tier taxonomy"""
     import asyncio
+    import random
     from concurrent.futures import ThreadPoolExecutor
 
     watchlists = db.query(Watchlist).all()
     positions = db.query(Position).filter(Position.current_volume > 0).all()
-    all_stocks = {s.symbol: s.name for s in db.query(Stock).all()}
+    stocks_db = db.query(Stock).all()
+    all_stocks = {s.symbol: s.name for s in stocks_db}
+    stock_industry_map = {s.symbol: (s.industry or "通用行业") for s in stocks_db}
 
     symbols_map = {}
     for w in watchlists:
@@ -898,19 +904,252 @@ async def run_stock_screener_agent_stream(
             "LONG_TERM_ETF": "🛡️ 专注长线价值与宽基/红利 ETF (数月~长期定投与网格)"
         }
         active_label = scope_labels.get(scope or "ALL", scope_labels["ALL"])
+        mode_tag = "【🎲 动态探索轮换】" if (explore or seed is not None) else "【🎯 经典多因子精选】"
 
         # 1. Yield clean initial status banner to frontend
-        yield f"> 📡 **智能选股 Agent 已启动【{active_label}】**：正在利用并发量化引擎扫描全量 **{total_candidates}** 只候选标的（自选/持仓/领涨主线龙头）的 1 年周期均线、近 10 日 K 线量价形态、量比与全维摆动指标...\n\n"
+        yield f"> 📡 **智能选股 Agent 已启动{mode_tag}【{active_label}】**：正在利用并发量化引擎扫描全量 **{total_candidates}** 只候选标的（自选/持仓/领涨主线龙头）的 1 年周期均线、近 10 日 K 线量价形态、量比与全维摆动指标...\n\n"
 
         if total_candidates == 0:
             yield "⚠️ **选股提示**: 当前候选池为空。请在【自选股/板块】中添加关注标的，智能选股 Agent 才能为您匹配战法推选！"
             return
 
-        # 2. Pre-fetch batch quotes in 1 single HTTP request (~50ms)
+        # 2. Pre-fetch batch quotes in 1 single HTTP request (~150ms for 2000 stocks)
         all_syms = list(symbols_map.keys())
-        MarketDataService.get_batch_realtime_quotes(all_syms)
+        quotes_map = MarketDataService.get_batch_realtime_quotes(all_syms)
 
-        # 3. Parallel fetch stock indicators using ThreadPoolExecutor
+        # 3. Two-Stage High-Performance Quant Funnel with Multi-Factor Scoring, Sector Diversification & Risk Filtering
+        selected_symbols_map = {}
+        if total_candidates > 35:
+            positions_syms = set(s for s, c in symbols_map.items() if c == "持仓股")
+            etf_syms = []
+            stock_syms = []
+
+            for sym in all_syms:
+                is_etf = sym.startswith(("51", "56", "58", "159", "501", "16"))
+                if is_etf:
+                    etf_syms.append(sym)
+                else:
+                    stock_syms.append(sym)
+
+            # --- Rule A: Risk & Liquidity Pre-Filter ---
+            def is_eligible_candidate(sym: str, is_etf: bool) -> bool:
+                if sym in positions_syms:
+                    return True
+                q = quotes_map.get(sym, {})
+                name = q.get("name") or all_stocks.get(sym) or ""
+                # ST / *ST / 退市 warning filter
+                name_upper = name.upper()
+                if "ST" in name_upper or "退" in name:
+                    return False
+                # Suspended or no valid price/volume
+                price = float(q.get("current_price") or 0.0)
+                vol = float(q.get("volume") or 0.0)
+                if price <= 0.0 or vol <= 0.0:
+                    return False
+                # Extreme panic limit-down filter (-9.8% or lower)
+                pct = float(q.get("pct_chg_num") or 0.0)
+                if pct <= -9.8:
+                    return False
+                # Liquidity threshold: filter out dead/zombie stocks (< 2000万元)
+                amt_wan = float(q.get("amount_wan") or 0.0)
+                if not is_etf and amt_wan < 2000.0:
+                    return False
+                if is_etf and amt_wan < 1000.0:
+                    return False
+                return True
+
+            filtered_stock_syms = [s for s in stock_syms if is_eligible_candidate(s, False)]
+            filtered_etf_syms = [s for s in etf_syms if is_eligible_candidate(s, True)]
+
+            # If filtering was too strict, fallback to original lists
+            if len(filtered_stock_syms) < 10:
+                filtered_stock_syms = stock_syms
+            if len(filtered_etf_syms) < 4:
+                filtered_etf_syms = etf_syms
+
+            # Set up deterministic or exploratory random generator
+            rng = random.Random(seed if seed is not None else (random.randint(1, 10000000) if explore else 42))
+
+            # --- Rule B: Multi-Factor Quant Scoring ---
+            def calc_short_term_score(sym: str) -> float:
+                q = quotes_map.get(sym, {})
+                pct = float(q.get("pct_chg_num") or 0.0)
+                amt_yi = float(q.get("amount_yi") or 0.0)
+                
+                # 1. Price Momentum Score (max 60)
+                # Golden breakout & divergence zone: +2.0% ~ +6.5%
+                if 2.0 <= pct <= 6.5:
+                    m_score = 60.0
+                elif 0.5 <= pct < 2.0:
+                    m_score = 48.0
+                elif -2.5 <= pct < 0.5:
+                    m_score = 44.0  # Healthy pullback
+                elif 6.5 < pct <= 9.2:
+                    m_score = 32.0  # Chasing high caution
+                elif pct > 9.2:
+                    m_score = 15.0  # Locked limit-up, difficult to buy
+                else:
+                    m_score = 10.0  # Breakdown / weak
+                    
+                # 2. Liquidity & High-Elasticity Volume Score (max 40)
+                # 1.5亿~25亿 is the golden elasticity sweet-spot for swing & momentum trades
+                if 2.0 <= amt_yi <= 25.0:
+                    l_score = 40.0
+                elif amt_yi > 25.0:
+                    l_score = 34.0  # Mega-cap, slightly lower momentum beta
+                elif 1.0 <= amt_yi < 2.0:
+                    l_score = 30.0
+                elif 0.5 <= amt_yi < 1.0:
+                    l_score = 22.0
+                else:
+                    l_score = 10.0
+
+                # 3. Dynamic exploration bonus in explore mode (max 15.0)
+                exp_bonus = rng.uniform(0.0, 15.0) if (explore or seed is not None) else 0.0
+                return m_score + l_score + exp_bonus
+
+            def calc_mid_term_score(sym: str) -> float:
+                q = quotes_map.get(sym, {})
+                pct = float(q.get("pct_chg_num") or 0.0)
+                amt_yi = float(q.get("amount_yi") or 0.0)
+                mcap_yi = float(q.get("market_cap_yi") or 0.0)
+                
+                # Steady trend momentum (max 50)
+                if 1.0 <= pct <= 6.0:
+                    m_score = 50.0
+                elif 0.0 <= pct < 1.0:
+                    m_score = 38.0
+                elif -2.0 <= pct < 0.0:
+                    m_score = 32.0
+                else:
+                    m_score = 20.0
+                    
+                # Capital depth & market cap (max 50)
+                cap_score = 0.0
+                if mcap_yi >= 300.0:
+                    cap_score += 25.0
+                elif mcap_yi >= 100.0:
+                    cap_score += 20.0
+                elif mcap_yi >= 30.0:
+                    cap_score += 15.0
+                else:
+                    cap_score += 10.0
+
+                if amt_yi >= 5.0:
+                    cap_score += 25.0
+                elif amt_yi >= 2.0:
+                    cap_score += 20.0
+                elif amt_yi >= 0.8:
+                    cap_score += 14.0
+                else:
+                    cap_score += 8.0
+
+                exp_bonus = rng.uniform(0.0, 12.0) if (explore or seed is not None) else 0.0
+                return m_score + cap_score + exp_bonus
+
+            core_broad_etfs = {"510300", "510500", "560510", "159915", "588000", "513180", "512690", "512880", "159949", "512480"}
+            def calc_etf_score(sym: str) -> float:
+                q = quotes_map.get(sym, {})
+                amt_yi = float(q.get("amount_yi") or 0.0)
+                base_score = 55.0 if sym in core_broad_etfs else 35.0
+                l_score = 45.0 if amt_yi >= 5.0 else (35.0 if amt_yi >= 1.5 else 20.0)
+                exp_bonus = rng.uniform(0.0, 18.0) if (explore or seed is not None) else 0.0
+                return base_score + l_score + exp_bonus
+
+            short_pool = sorted(filtered_stock_syms, key=calc_short_term_score, reverse=True)
+            mid_pool = sorted(filtered_stock_syms, key=calc_mid_term_score, reverse=True)
+            etf_pool = sorted(filtered_etf_syms, key=calc_etf_score, reverse=True)
+
+            # --- Rule C: Sector Cap & Diversification (防止单一行业过度扎堆) ---
+            def select_diversified(pool: list, target_count: int, max_per_ind: int = 3, existing_chosen: set = None) -> list:
+                selected = []
+                ind_counts = {}
+                if existing_chosen:
+                    for s in existing_chosen:
+                        ind = stock_industry_map.get(s, "通用行业")
+                        ind_counts[ind] = ind_counts.get(ind, 0) + 1
+
+                deferred = []
+                for s in pool:
+                    if existing_chosen and s in existing_chosen:
+                        continue
+                    ind = stock_industry_map.get(s, "通用行业")
+                    limit = max_per_ind if ind not in ("通用行业", "其他行业", "", None) else (max_per_ind * 2)
+                    if ind_counts.get(ind, 0) < limit:
+                        selected.append(s)
+                        ind_counts[ind] = ind_counts.get(ind, 0) + 1
+                        if len(selected) >= target_count:
+                            break
+                    else:
+                        deferred.append(s)
+
+                # Fallback: fill remaining if diverse pool is smaller than target_count
+                if len(selected) < target_count:
+                    for s in deferred:
+                        if s not in selected:
+                            selected.append(s)
+                            if len(selected) >= target_count:
+                                break
+                return selected
+
+            # Allocate quota based on scope
+            chosen = set()
+            # 1. Always prioritize active user positions (up to 8)
+            for ps in list(positions_syms)[:8]:
+                chosen.add(ps)
+
+            if scope == "SHORT_TERM":
+                needed = max(0, 30 - len(chosen))
+                div_stocks = select_diversified(short_pool, needed, max_per_ind=4, existing_chosen=chosen)
+                for s in div_stocks:
+                    chosen.add(s)
+            elif scope == "MID_TERM":
+                needed_mid = max(0, 20 - len(chosen))
+                div_mid = select_diversified(mid_pool, needed_mid, max_per_ind=3, existing_chosen=chosen)
+                for s in div_mid:
+                    chosen.add(s)
+                needed_etf = max(0, 30 - len(chosen))
+                for s in etf_pool:
+                    if len(chosen) >= 30:
+                        break
+                    chosen.add(s)
+            elif scope == "LONG_TERM_ETF":
+                for s in etf_pool[:22]:
+                    if len(chosen) >= 22:
+                        break
+                    chosen.add(s)
+                needed_mid = max(0, 30 - len(chosen))
+                div_mid = select_diversified(mid_pool, needed_mid, max_per_ind=2, existing_chosen=chosen)
+                for s in div_mid:
+                    chosen.add(s)
+            else: # ALL: Balanced representation: ~12 Short, ~12 Mid, ~8 Long/ETF
+                # 1. 12 short-term diverse momentum stocks
+                short_selected = select_diversified(short_pool, 12, max_per_ind=3, existing_chosen=chosen)
+                for s in short_selected:
+                    chosen.add(s)
+                # 2. 12 mid-term diverse trend stocks
+                mid_selected = select_diversified(mid_pool, 12, max_per_ind=3, existing_chosen=chosen)
+                for s in mid_selected:
+                    chosen.add(s)
+                # 3. 8 ETF assets
+                for s in etf_pool:
+                    if len([x for x in chosen if x in filtered_etf_syms]) >= 8:
+                        break
+                    chosen.add(s)
+
+            for sym in chosen:
+                selected_symbols_map[sym] = symbols_map[sym]
+
+            # Calculate industry coverage statistics for user report
+            covered_inds = set(stock_industry_map.get(s, "通用行业") for s in chosen if s in filtered_stock_syms)
+            covered_inds.discard("通用行业")
+            ind_stat_str = f"，覆盖 **{len(covered_inds)}** 个细分行业板块（单行业最多入选 ≤ 3 只）" if covered_inds else ""
+
+            yield f"> ⚡ **量化初筛漏斗完成**：已执行【ST/退市避雷、流动性筛选、行业中性化打散去扎堆{ind_stat_str}与多因子打分{mode_tag}】，从 **{total_candidates}** 只标的中严选出 **{len(selected_symbols_map)}** 只核心潜力候选标的！正在并发提取日K/周K/月K深度指标与权威要闻...\n\n"
+        else:
+            selected_symbols_map = symbols_map
+
+        # 4. Parallel fetch stock indicators & recent official news using ThreadPoolExecutor for shortlisted symbols
         loop = asyncio.get_running_loop()
         watchlist_items = []
 
@@ -918,16 +1157,27 @@ async def run_stock_screener_agent_stream(
             name = all_stocks.get(sym) or MarketDataService.get_stock_name(sym)
             ind = MarketDataService.get_stock_indicators_summary(sym, name)
             ind["category"] = cat
+            # Concurrently attach official stock news & announcements from EastMoney / Securities Press / CLS
+            try:
+                from services.news_service import NewsService
+                raw_news = NewsService.get_stock_news(sym, name=name, limit=3)
+                ind["recent_news"] = [
+                    f"[{n.get('publish_time', '')}] 《{n.get('source', '权威媒体')}》: {n.get('title', '')}"
+                    for n in raw_news
+                ]
+            except Exception:
+                ind["recent_news"] = []
             return ind
 
-        with ThreadPoolExecutor(max_workers=min(12, max(1, total_candidates))) as executor:
+        target_pool = list(selected_symbols_map.items())
+        with ThreadPoolExecutor(max_workers=min(12, max(1, len(target_pool)))) as executor:
             tasks = [
                 loop.run_in_executor(executor, fetch_single, sym, cat)
-                for sym, cat in symbols_map.items()
+                for sym, cat in target_pool
             ]
             watchlist_items = await asyncio.gather(*tasks)
 
-        yield f"> 🧠 **行情研判与资产画像全量就绪**！已标注 A 股股票与 ETF 基金属性，正在对标【短线/中线/长线与ETF多维买卖标准】生成精准建仓策略...\n\n---\n\n"
+        yield f"> 🧠 **量化行情、权威公告与财联社电报全量核验就绪**！正在融合【消息面避雷/催化 + 日/周/月K多周期共振】严选建仓标的...\n\n---\n\n"
 
         from routers.account import get_account_fund_summary
         account_fund_info = get_account_fund_summary(db)
@@ -973,5 +1223,97 @@ async def run_stock_screener_agent_stream(
 
         AgentMemoryService.auto_extract_and_evolve(db, report_text, source_label="选股 Agent 每日推选")
 
+        # Auto record structured recommendation snapshots for performance tracking & self-evolution
+        from services.screener_tracker import ScreenerTrackerService
+        ScreenerTrackerService.record_recommendations_from_report(
+            db=db,
+            report_id=report.id,
+            report_text=report_text,
+            candidate_items=watchlist_items,
+            scope=scope or "ALL"
+        )
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get("/screener/performance-stats")
+def get_screener_performance_stats(
+    days: int = 0,
+    tier: Optional[str] = None,
+    strategy_id: Optional[str] = None,
+    limit: int = 500,
+    db: Session = Depends(get_db)
+):
+    """Get aggregated track record and win rate stats for past screener recommendations with multi-period & strategy scorecard"""
+    from services.screener_tracker import ScreenerTrackerService
+    return ScreenerTrackerService.get_performance_summary(
+        db,
+        days=days,
+        tier=tier,
+        strategy_id=strategy_id,
+        limit=limit
+    )
+
+
+@router.post("/screener/evolve-stream")
+async def run_screener_self_evolution_stream(
+    days: int = 0,
+    db: Session = Depends(get_db)
+):
+    """
+    Stream Screener Strategy Review & Self-Evolution Report.
+    Audits past recommendations vs actual price performance, reflects on winning/losing factors,
+    and automatically extracts actionable lessons into Agent Memory.
+    """
+    from services.screener_tracker import ScreenerTrackerService
+    stats = ScreenerTrackerService.get_performance_summary(db, days=days)
+
+    if not stats.get("records"):
+        async def empty_generator():
+            msg = """# ℹ️ 历史推选跟踪样本库准备中
+
+> 📌 **系统状态**：数据库中尚未沉淀智能选股的真实推选样本。
+
+### 💡 为什么需要推选样本？
+AI 策略自进化的核心原理是：**基于实盘实际推荐过的股票，跟踪其实盘后续走势（是否达标止盈、是否触及止损），进而归因并自适应优化选股规则**。
+
+### 🚀 您只需简单两步即可激活：
+1. **第一步（生成首批推选）**：点击上方的 **【🎯 智能选股 Agent】** 按钮运行一次选股。系统会自动为您快照记录入选股票的买入基准价、目标止盈与防守止损位；
+2. **第二步（实盘走势跟踪）**：系统在后台毫秒级对齐实盘最新行情；
+3. **第三步（开启自进化）**：再次点击 **【🔄 胜率复盘与自进化】**，AI 将基于真实涨跌盈亏进行深度归因与策略记忆进化！
+"""
+            yield msg
+
+        return StreamingResponse(empty_generator(), media_type="text/event-stream")
+
+    prompt = ScreenerTrackerService.build_screener_evolution_prompt(db, days=days)
+
+    async def event_generator():
+        report_text = ""
+        async for chunk in MultiLLMEngine.generate_analysis_stream(
+            db,
+            prompt,
+            system_prompt="你是一位专业的 A 股量化选股策略总监与风控教练，擅长通过实盘复盘归因得失，动态优化选股规则与防守参数。"
+        ):
+            if chunk:
+                report_text += chunk
+                yield chunk
+
+        # Auto save review report
+        active_cfg = MultiLLMEngine.get_active_config(db)
+        report = AnalysisReport(
+            report_type="SCREENER_EVOLUTION_REVIEW",
+            provider_model=active_cfg["model"],
+            input_summary="智能选股策略实盘胜率复盘与自进化",
+            content_md=report_text,
+            generated_at=bj_now()
+        )
+        db.add(report)
+        db.commit()
+
+        # Auto extract newly learned rules into agent memory bank
+        AgentMemoryService.auto_extract_and_evolve(db, report_text, source_label="选股策略自进化复盘")
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 

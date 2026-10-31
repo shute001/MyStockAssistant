@@ -7,7 +7,8 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     # Database
-    DATABASE_URL: str = "sqlite:///./stock_assistant.db"
+    BACKEND_DIR: str = os.path.dirname(os.path.abspath(__file__))
+    DATABASE_URL: str = f"sqlite:///{os.path.join(BACKEND_DIR, 'stock_assistant.db').replace(chr(92), '/')}"
     
     # Default LLM Providers
     DEFAULT_PROVIDER: str = "deepseek"

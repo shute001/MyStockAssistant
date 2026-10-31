@@ -231,13 +231,16 @@ def create_position(item: PositionCreate, db: Session = Depends(get_db)):
 
 @router.delete("/positions/{pos_id}")
 def delete_position(pos_id: int, db: Session = Depends(get_db)):
-    """Delete a holding position"""
+    """Delete a holding position and cascade clean its monitoring conditions"""
     pos = db.query(Position).filter(Position.id == pos_id).first()
     if not pos:
         raise HTTPException(status_code=404, detail="Position not found")
+    
+    # 级联删除该标的的预警监控规则
+    deleted_conds = db.query(PositionCondition).filter(PositionCondition.symbol == pos.symbol).delete()
     db.delete(pos)
     db.commit()
-    return {"status": "success"}
+    return {"status": "success", "deleted_conditions_count": deleted_conds}
 
 @router.patch("/positions/{pos_id}/strategy-tag")
 def update_position_strategy_tag(
@@ -620,6 +623,7 @@ class BatchConditionCreate(BaseModel):
 
 class ConditionUpdate(BaseModel):
     is_active: Optional[bool] = None
+    condition_type: Optional[str] = None
     condition_label: Optional[str] = None
     target_value: Optional[float] = None
     ma_period: Optional[int] = None
@@ -643,6 +647,11 @@ def get_conditions(symbol: Optional[str] = None, db: Session = Depends(get_db)):
     symbols = list({c.symbol for c in conditions})
     quotes = MarketDataService.get_batch_realtime_quotes(symbols) if symbols else {}
 
+    # Active held positions (current_volume > 0)
+    held_symbols = {
+        p.symbol for p in db.query(Position.symbol).filter(Position.current_volume > 0).all()
+    }
+
     result = []
     for c in conditions:
         q = quotes.get(c.symbol, {})
@@ -665,7 +674,8 @@ def get_conditions(symbol: Optional[str] = None, db: Session = Depends(get_db)):
             "trigger_reason": c.trigger_reason,
             "strategy_note": c.strategy_note,
             "created_at": c.created_at.strftime("%Y-%m-%d %H:%M:%S") if c.created_at else None,
-            "current_price": curr_p
+            "current_price": curr_p,
+            "is_held": c.symbol in held_symbols
         })
     return result
 
@@ -751,6 +761,8 @@ def update_condition(condition_id: int, req: ConditionUpdate, db: Session = Depe
             cond.is_triggered = False
             cond.triggered_at = None
             cond.trigger_reason = None
+    if req.condition_type is not None:
+        cond.condition_type = req.condition_type.upper()
     if req.condition_label is not None:
         cond.condition_label = req.condition_label
     if req.target_value is not None:
@@ -768,6 +780,40 @@ def update_condition(condition_id: int, req: ConditionUpdate, db: Session = Depe
 
     db.commit()
     return {"status": "success", "message": "条件已更新"}
+
+class BatchConditionsDelete(BaseModel):
+    ids: List[int]
+
+@router.post("/conditions/batch-delete")
+def batch_delete_conditions(req: BatchConditionsDelete, db: Session = Depends(get_db)):
+    """Batch delete conditions by list of IDs"""
+    if not req.ids:
+        return {"status": "success", "deleted_count": 0, "message": "未提供要删除的条件ID"}
+    
+    deleted_count = db.query(PositionCondition).filter(PositionCondition.id.in_(req.ids)).delete(synchronize_session=False)
+    db.commit()
+    return {
+        "status": "success",
+        "deleted_count": deleted_count,
+        "message": f"成功批量删除 {deleted_count} 条监控规则"
+    }
+
+@router.delete("/conditions/cleanup-orphan")
+def cleanup_orphan_conditions(db: Session = Depends(get_db)):
+    """Clean up conditions whose symbols are no longer in active holding positions"""
+    active_positions = db.query(Position.symbol).filter(Position.current_volume > 0).all()
+    active_symbols = {p[0] for p in active_positions}
+    
+    orphan_conditions = db.query(PositionCondition).filter(~PositionCondition.symbol.in_(active_symbols)).all()
+    count = len(orphan_conditions)
+    for cond in orphan_conditions:
+        db.delete(cond)
+    db.commit()
+    return {
+        "status": "success",
+        "cleaned_count": count,
+        "message": f"成功清理 {count} 条无持仓关联的预警监控规则"
+    }
 
 @router.delete("/conditions/{condition_id}")
 def delete_condition(condition_id: int, db: Session = Depends(get_db)):
@@ -894,5 +940,47 @@ def clear_alerts(only_read: bool = Query(False), db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success", "deleted_count": deleted_count, "message": f"已清空 {deleted_count} 条预警历史"}
 
+class BatchAlertsDelete(BaseModel):
+    ids: List[int]
 
+@router.post("/alerts/batch-delete")
+def batch_delete_alerts(req: BatchAlertsDelete, db: Session = Depends(get_db)):
+    """Batch delete alert notifications by IDs"""
+    if not req.ids:
+        return {"status": "success", "deleted_count": 0}
+    deleted_count = db.query(AlertNotification).filter(AlertNotification.id.in_(req.ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"status": "success", "deleted_count": deleted_count, "message": f"已批量删除 {deleted_count} 条预警记录"}
 
+@router.get("/news/macro")
+def get_macro_telegraph(limit: int = Query(20, ge=5, le=50), force_refresh: bool = Query(False)):
+    """Fetch real-time 7x24 telegraph headlines from professional source (财联社优先)"""
+    from services.news_service import NewsService
+    items = NewsService.get_cls_telegraph_news(limit=limit, force_refresh=force_refresh)
+    return {
+        "status": "success",
+        "source": "财联社 (Cailianpress 7x24H)",
+        "count": len(items),
+        "items": items
+    }
+
+@router.get("/{symbol}/news")
+def get_stock_news_endpoint(
+    symbol: str, 
+    limit: int = Query(8, ge=1, le=20),
+    force_refresh: bool = Query(False),
+    db: Session = Depends(get_db)
+):
+    """Fetch official news and announcements for an individual stock (EastMoney & Securities Press & CLS)"""
+    from services.news_service import NewsService
+    sym = MarketDataService.format_symbol(symbol)
+    stock = db.query(Stock).filter(Stock.symbol == sym).first()
+    name = stock.name if stock else MarketDataService.get_stock_name(sym)
+    items = NewsService.get_stock_news(sym, name=name, limit=limit, force_refresh=force_refresh)
+    return {
+        "status": "success",
+        "symbol": sym,
+        "name": name,
+        "count": len(items),
+        "items": items
+    }

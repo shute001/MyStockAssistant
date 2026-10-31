@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -255,9 +255,74 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   const [screenerScope, setScreenerScope] = useState<ScreenerScope>('ALL');
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [isScreenerRunning, setIsScreenerRunning] = useState(false);
+  const [isEvolutionRunning, setIsEvolutionRunning] = useState(false);
+  const [isTrackerModalOpen, setIsTrackerModalOpen] = useState(false);
+  const [screenerStats, setScreenerStats] = useState<any>(null);
+  const [isLoadingScreenerStats, setIsLoadingScreenerStats] = useState(false);
+  const [screenerDays, setScreenerDays] = useState<number>(0);
+  const [selectedStrategyFilter, setSelectedStrategyFilter] = useState<string>('ALL');
+  const [screenerSearchText, setScreenerSearchText] = useState<string>('');
   const [agentReportMd, setAgentReportMd] = useState<string>('');
   const [isPushingWeChat, setIsPushingWeChat] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
+
+  const fetchScreenerStats = async (daysOverride?: number) => {
+    setIsLoadingScreenerStats(true);
+    try {
+      const d = daysOverride !== undefined ? daysOverride : screenerDays;
+      const res = await axios.get('/api/v1/ai/screener/performance-stats', {
+        params: {
+          days: d,
+          limit: 1000
+        }
+      });
+      setScreenerStats(res.data);
+    } catch (err) {
+      console.error('Failed to fetch screener stats:', err);
+    } finally {
+      setIsLoadingScreenerStats(false);
+    }
+  };
+
+  const handleSelectScreenerDays = (d: number) => {
+    setScreenerDays(d);
+    fetchScreenerStats(d);
+  };
+
+  const handleStartScreenerEvolution = async () => {
+    if (isScreenerRunning || isAgentRunning || isEvolutionRunning) return;
+    setIsEvolutionRunning(true);
+    setAgentReportMd('');
+    setTimeout(() => {
+      reportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+
+    try {
+      const response = await fetch(`/api/v1/ai/screener/evolve-stream?days=${screenerDays}`, { method: 'POST' });
+      if (!response.body) throw new Error('ReadableStream not supported');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let reportText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        reportText += chunk;
+        setAgentReportMd(reportText);
+      }
+      setTimeout(() => {
+        fetchAgentMemories();
+        fetchScreenerStats();
+      }, 1000);
+    } catch (err) {
+      console.error('Screener Evolution Stream Error:', err);
+      setAgentReportMd((prev) => prev + '\n\n[策略自进化生成异常，请检查网络或配置]');
+    } finally {
+      setIsEvolutionRunning(false);
+    }
+  };
 
   const handlePushToWeChat = async (contentToPush?: string, customTitle?: string) => {
     const targetContent = contentToPush || agentReportMd;
@@ -290,9 +355,9 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
 
 
-  // Handle Start Stock Screener Agent with multi-tier scope
-  const handleStartScreenerAgent = async (targetScope?: ScreenerScope) => {
-    if (isScreenerRunning || isAgentRunning) return;
+  // Handle Start Stock Screener Agent with multi-tier scope and dynamic explore
+  const handleStartScreenerAgent = async (targetScope?: ScreenerScope, explore: boolean = false) => {
+    if (isScreenerRunning || isAgentRunning || isEvolutionRunning) return;
     const scopeToUse = targetScope || screenerScope;
     setScreenerScope(scopeToUse);
     setIsScreenerRunning(true);
@@ -304,7 +369,8 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
     }, 100);
 
     try {
-      const response = await fetch(`/api/v1/ai/screener/run-stream?scope=${scopeToUse}`, { method: 'POST' });
+      const exploreParam = explore ? `&explore=true&seed=${Date.now()}` : '';
+      const response = await fetch(`/api/v1/ai/screener/run-stream?scope=${scopeToUse}${exploreParam}`, { method: 'POST' });
       if (!response.body) throw new Error('ReadableStream not supported');
 
       const reader = response.body.getReader();
@@ -318,7 +384,10 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
         reportText += chunk;
         setAgentReportMd(reportText);
       }
-      setTimeout(() => fetchAgentMemories(), 1000);
+      setTimeout(() => {
+        fetchAgentMemories();
+        fetchScreenerStats();
+      }, 1000);
     } catch (err) {
       console.error('Screener Agent Stream Error:', err);
       setAgentReportMd((prev) => prev + '\n\n[智能选股生成异常，请检查网络或 API Key 设置]');
@@ -381,6 +450,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   useEffect(() => {
     fetchAgentMemories();
     fetchLatestReviewReport();
+    fetchScreenerStats();
   }, []);
 
 
@@ -833,8 +903,8 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                 </select>
 
                 <button
-                  onClick={() => handleStartScreenerAgent()}
-                  disabled={isScreenerRunning || isAgentRunning}
+                  onClick={() => handleStartScreenerAgent(undefined, false)}
+                  disabled={isScreenerRunning || isAgentRunning || isEvolutionRunning}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold text-white shadow transition-all flex items-center space-x-1.5 ${
                     isScreenerRunning 
                       ? 'bg-emerald-800 opacity-80 cursor-not-allowed animate-pulse' 
@@ -845,7 +915,52 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                   <Cpu className="w-3.5 h-3.5 text-emerald-200" />
                   <span>{isScreenerRunning ? '分级推选中...' : '智能选股 Agent'}</span>
                 </button>
+
+                <button
+                  onClick={() => handleStartScreenerAgent(undefined, true)}
+                  disabled={isScreenerRunning || isAgentRunning || isEvolutionRunning}
+                  className={`px-2.5 py-1.5 ml-1 rounded-lg text-xs font-semibold text-amber-300 border border-amber-500/30 bg-amber-950/40 hover:bg-amber-900/50 shadow transition-all flex items-center space-x-1 ${
+                    isScreenerRunning ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                  title="在优质候选池中换一批不同细分行业与形态的潜力品种"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>换一批</span>
+                </button>
               </div>
+
+              {/* 🔄 策略复盘与自进化 Button */}
+              <button
+                onClick={() => handleStartScreenerEvolution()}
+                disabled={isScreenerRunning || isAgentRunning || isEvolutionRunning}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 border shadow ${
+                  isEvolutionRunning
+                    ? 'bg-amber-950/80 text-amber-300 border-amber-700/60 animate-pulse'
+                    : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white border-amber-500/40 shadow-amber-900/20'
+                }`}
+                title="对比历史推选标的的真实涨跌走势，深度归因成败并自动进化选股策略与风控规则"
+              >
+                <TrendingUp className={`w-3.5 h-3.5 ${isEvolutionRunning ? 'animate-spin' : ''}`} />
+                <span>{isEvolutionRunning ? '自进化分析中...' : '🔄 胜率复盘与自进化'}</span>
+              </button>
+
+              {/* 📊 推选战绩看板 Button */}
+              <button
+                onClick={() => {
+                  fetchScreenerStats();
+                  setIsTrackerModalOpen(true);
+                }}
+                className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-medium rounded-xl shadow transition-all flex items-center space-x-1.5"
+                title="查看历史推选标的盈亏走势跟踪与胜率看板"
+              >
+                <Award className="w-3.5 h-3.5 text-amber-400" />
+                <span>推选战绩看板</span>
+                {screenerStats && screenerStats.total_count > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">
+                    {screenerStats.win_rate}%
+                  </span>
+                )}
+              </button>
 
               <button
                 onClick={() => setIsChatModalOpen(true)}
@@ -1482,12 +1597,17 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
 
       {/* Streamed Agent Review Section */}
       <div ref={reportRef} className="scroll-mt-6">
-        {(agentReportMd || isAgentRunning || isScreenerRunning) && (
+        {(agentReportMd || isAgentRunning || isScreenerRunning || isEvolutionRunning) && (
           <div className="bg-slate-900 border border-purple-900/50 rounded-2xl p-6 shadow-2xl space-y-4">
             <div className="border-b border-slate-800 pb-3">
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
-                  {isScreenerRunning || agentReportMd.includes('智能选股') || agentReportMd.includes('Screener') || agentReportMd.includes('分级选股') ? (
+                  {isEvolutionRunning || agentReportMd.includes('自进化') || agentReportMd.includes('胜率复盘') ? (
+                    <>
+                      <TrendingUp className="w-5 h-5 text-amber-400" />
+                      <span>🧠 AI 选股策略实盘胜率复盘与自进化研报</span>
+                    </>
+                  ) : isScreenerRunning || agentReportMd.includes('智能选股') || agentReportMd.includes('Screener') || agentReportMd.includes('分级选股') ? (
                     <>
                       <Cpu className="w-5 h-5 text-emerald-400" />
                       <span>🎯 Stock & ETF Screener Agent 多周期分级选股报告</span>
@@ -1500,7 +1620,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                   )}
                 </h3>
                 <div className="flex items-center gap-2">
-                  {agentReportMd && !isAgentRunning && !isScreenerRunning && (
+                  {agentReportMd && !isAgentRunning && !isScreenerRunning && !isEvolutionRunning && (
                     <button
                       onClick={() => handlePushToWeChat()}
                       disabled={isPushingWeChat}
@@ -1510,10 +1630,10 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                       <span>{isPushingWeChat ? '发送中...' : '📱 发送至微信'}</span>
                     </button>
                   )}
-                  {(isAgentRunning || isScreenerRunning) && (
+                  {(isAgentRunning || isScreenerRunning || isEvolutionRunning) && (
                     <span className="text-xs text-purple-300 flex items-center gap-2 font-mono">
                       <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
-                      {isScreenerRunning ? '智能选股 Agent 多周期分级匹配中...' : 'Agent 结合记忆思考进化中...'}
+                      {isEvolutionRunning ? 'AI 策略自进化深度复盘中...' : isScreenerRunning ? '智能选股 Agent 多周期分级匹配中...' : 'Agent 结合记忆思考进化中...'}
                     </span>
                   )}
                 </div>
@@ -1610,6 +1730,109 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
             >
               {agentReportMd}
             </ReactMarkdown>
+          </div>
+
+          {/* Interactive Bottom Actions & Quick Reply Box */}
+          <div className="pt-4 border-t border-slate-800 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-slate-400 font-medium">💡 报告操作与交互:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const snippet = agentReportMd.slice(0, 500);
+                    setChatMessages(prev => [
+                      ...prev,
+                      { role: 'assistant', content: `关于刚才生成的报告内容：\n\n${snippet}...\n\n请问您对其中的具体标的、买卖点、止损位或策略有何疑问？欢迎随时向我追问！` }
+                    ]);
+                    setIsChatModalOpen(true);
+                  }}
+                  className="px-3 py-1.5 bg-indigo-950/90 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-purple-400" />
+                  <span>💬 展开追问对话</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleStartScreenerAgent(undefined, false)}
+                  disabled={isScreenerRunning || isEvolutionRunning}
+                  className="px-3 py-1.5 bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow"
+                >
+                  <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>🎯 运行智能选股 Agent</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleStartScreenerAgent(undefined, true)}
+                  disabled={isScreenerRunning || isEvolutionRunning}
+                  className="px-2.5 py-1.5 bg-amber-950/90 hover:bg-amber-900 text-amber-300 border border-amber-700/60 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow"
+                  title="在优质候选池中换一批不同行业潜力品种"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>换一批</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    fetchScreenerStats();
+                    setIsTrackerModalOpen(true);
+                  }}
+                  className="px-3 py-1.5 bg-amber-950/90 hover:bg-amber-900 text-amber-300 border border-amber-700/60 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow"
+                >
+                  <Award className="w-3.5 h-3.5 text-amber-400" />
+                  <span>📊 推选战绩看板</span>
+                </button>
+              </div>
+
+              <div className="text-[11px] text-slate-500 font-mono">
+                报告已沉淀 · 支持随时回复追问
+              </div>
+            </div>
+
+            {/* Inline Quick Chat Reply Box */}
+            <div className="bg-slate-950/90 border border-slate-800 rounded-xl p-2 flex items-center gap-2 shadow-inner">
+              <Bot className="w-4 h-4 text-purple-400 flex-shrink-0 ml-1" />
+              <input
+                type="text"
+                placeholder="对本报告有任何疑问或想回复？在此输入（如：这几只股票如何建仓？/ 为何如此定止损？）按回车发送..."
+                className="bg-transparent flex-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none px-2"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
+                    const userQuery = (e.target as HTMLInputElement).value.trim();
+                    (e.target as HTMLInputElement).value = '';
+                    setChatMessages(prev => [
+                      ...prev,
+                      { role: 'user', content: `【关于报告的提问】: ${userQuery}\n\n(参考前序报告内容)` }
+                    ]);
+                    setIsChatModalOpen(true);
+                    handleSendChatMessage(`【关于刚才生成的报告】: ${userQuery}`);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={(e) => {
+                  const inputEl = (e.currentTarget.previousElementSibling as HTMLInputElement);
+                  if (inputEl && inputEl.value.trim()) {
+                    const userQuery = inputEl.value.trim();
+                    inputEl.value = '';
+                    setChatMessages(prev => [
+                      ...prev,
+                      { role: 'user', content: `【关于报告的提问】: ${userQuery}\n\n(参考前序报告内容)` }
+                    ]);
+                    setIsChatModalOpen(true);
+                    handleSendChatMessage(`【关于刚才生成的报告】: ${userQuery}`);
+                  }
+                }}
+                className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow"
+              >
+                <Send className="w-3 h-3" />
+                <span>发送回复</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2980,6 +3203,448 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 🏆 Screener Performance Tracker Modal */}
+      {isTrackerModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-amber-500/30 rounded-2xl w-full max-w-6xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-800 bg-slate-950/80 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                  <Award className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
+                    <span>🏆 智能选股 Agent 历史推选胜率与实盘收益追踪</span>
+                    {screenerStats && screenerStats.total_count > 0 && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/40">
+                        全量胜率 {screenerStats.win_rate}% ({screenerStats.total_count}只)
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    实盘毫秒级行情对齐 · 核心战法胜率与去留评估 · 驱动选股策略闭环自进化
+                  </p>
+                </div>
+              </div>
+
+              {/* Time Range Selector & Controls */}
+              <div className="flex items-center space-x-3">
+                {/* Time Range Pills */}
+                <div className="flex items-center bg-slate-950/90 border border-slate-800 p-1 rounded-xl gap-1">
+                  {[
+                    { label: '全部历史 (长期留存)', value: 0 },
+                    { label: '近 90 天', value: 90 },
+                    { label: '近 30 天', value: 30 },
+                    { label: '近 7 天', value: 7 }
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => handleSelectScreenerDays(opt.value)}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
+                        screenerDays === opt.value
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => fetchScreenerStats()}
+                  disabled={isLoadingScreenerStats}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs transition-colors"
+                  title="刷新最新行情与胜率"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingScreenerStats ? 'animate-spin text-amber-400' : ''}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTrackerModalOpen(false)}
+                  className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-xl text-xs transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 custom-scrollbar">
+              {isLoadingScreenerStats && !screenerStats ? (
+                <div className="py-20 text-center space-y-3">
+                  <RefreshCw className="w-8 h-8 animate-spin text-amber-400 mx-auto" />
+                  <p className="text-sm text-slate-400">正在对齐历史推选标的最新实盘走势与盈亏...</p>
+                </div>
+              ) : !screenerStats || screenerStats.total_count === 0 ? (
+                <div className="py-16 text-center space-y-4 bg-slate-950/40 rounded-2xl border border-slate-800/80 p-8">
+                  <div className="w-12 h-12 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center mx-auto border border-amber-500/20">
+                    <TrendingUp className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="font-bold text-slate-200 text-sm">暂无该周期内的历史推选样本</h4>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                      系统已开启推选长期留痕与全量归档！若当前周期无样本，可切换为【全部历史 (长期留存)】或点击下方按钮立即运行选股。
+                    </p>
+                  </div>
+                  <div className="flex justify-center gap-3">
+                    <button
+                      onClick={() => handleSelectScreenerDays(0)}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition-all"
+                    >
+                      查看全部历史留存样本
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsTrackerModalOpen(false);
+                        handleStartScreenerAgent();
+                      }}
+                      className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all"
+                    >
+                      立即运行智能选股 Agent
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* 4 Cards Summary */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                      <div className="text-slate-400 text-xs font-medium">实盘整体胜率</div>
+                      <div className="text-2xl font-black text-emerald-400 mt-1 font-mono">
+                        {screenerStats.win_rate}%
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        盈利 <span className="text-emerald-400 font-bold">{screenerStats.win_count}</span> 只 / 亏损 <span className="text-rose-400 font-bold">{screenerStats.loss_count}</span> 只
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                      <div className="text-slate-400 text-xs font-medium">平均最高冲高</div>
+                      <div className="text-2xl font-bold text-amber-400 mt-1 font-mono">
+                        +{screenerStats.avg_max_gain_pct}%
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        最新均收益: <span className={screenerStats.avg_profit_pct >= 0 ? 'text-rose-400 font-bold' : 'text-emerald-400 font-bold'}>{screenerStats.avg_profit_pct > 0 ? '+' : ''}{screenerStats.avg_profit_pct}%</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                      <div className="text-slate-400 text-xs font-medium">达成目标止盈</div>
+                      <div className="text-2xl font-bold text-teal-400 mt-1 font-mono">
+                        {screenerStats.hit_target_count} <span className="text-xs font-normal text-slate-400">只</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        纪律止损: <span className="text-rose-400 font-bold">{screenerStats.hit_stop_loss_count}</span> 只
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                      <div className="text-slate-400 text-xs font-medium">全量追踪样本</div>
+                      <div className="text-2xl font-bold text-sky-400 mt-1 font-mono">
+                        {screenerStats.total_count} <span className="text-xs font-normal text-slate-400">只</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        当前跟踪中: <span className="text-slate-200 font-bold">{screenerStats.tracking_count}</span> 只
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 🧠 Strategy Scorecard & Retention/Pruning Recommendation Panel */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Brain className="w-4 h-4 text-amber-400" />
+                        <h4 className="font-bold text-slate-200 text-sm">
+                          核心策略与战法胜率评估看板（策略去留决策指南）
+                        </h4>
+                        <span className="text-[11px] text-slate-400 hidden md:inline">
+                          — 点击战法卡片可在下方快速过滤相关个股
+                        </span>
+                      </div>
+                      {selectedStrategyFilter !== 'ALL' && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedStrategyFilter('ALL')}
+                          className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/20"
+                        >
+                          <X className="w-3 h-3" />
+                          <span>重置战法筛选 (查看全部)</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {screenerStats.by_strategy && screenerStats.by_strategy.length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                        {screenerStats.by_strategy.map((s: any) => {
+                          const isSelected = selectedStrategyFilter === s.strategy_id;
+                          return (
+                            <div
+                              key={s.strategy_id}
+                              onClick={() => setSelectedStrategyFilter(isSelected ? 'ALL' : s.strategy_id)}
+                              className={`cursor-pointer rounded-xl p-3.5 border transition-all duration-150 flex flex-col justify-between ${
+                                isSelected
+                                  ? 'bg-amber-950/30 border-amber-500 shadow-lg shadow-amber-950/40 ring-1 ring-amber-500'
+                                  : 'bg-slate-950/70 border-slate-800/90 hover:border-slate-700 hover:bg-slate-900/60'
+                              }`}
+                            >
+                              <div>
+                                <div className="flex items-start justify-between gap-1 mb-2">
+                                  <h5 className="font-bold text-slate-100 text-xs leading-snug">
+                                    {s.strategy_name}
+                                  </h5>
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold border shrink-0 ${
+                                      s.advice_tag === 'KEEP'
+                                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700/60'
+                                        : s.advice_tag === 'WATCH'
+                                        ? 'bg-amber-950/80 text-amber-300 border-amber-700/60'
+                                        : 'bg-rose-950/80 text-rose-300 border-rose-700/60'
+                                    }`}
+                                  >
+                                    {s.advice_label}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-400 mb-2.5 leading-relaxed line-clamp-1" title={s.description}>
+                                  {s.description}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 text-xs bg-slate-900/60 p-2 rounded-lg border border-slate-800/60 font-mono mb-2">
+                                  <div>
+                                    <div className="text-[10px] text-slate-500">实盘胜率</div>
+                                    <div className="font-black text-emerald-400 text-sm">
+                                      {s.win_rate}%
+                                      <span className="text-[10px] font-normal text-slate-400 ml-1">({s.win}/{s.total}只)</span>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] text-slate-500">平均收益</div>
+                                    <div className={`font-bold text-sm ${s.avg_profit >= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                      {s.avg_profit > 0 ? '+' : ''}{s.avg_profit}%
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] text-slate-500">平均冲高 / 回撤</div>
+                                    <div className="text-[11px] text-slate-300">
+                                      <span className="text-amber-400 font-semibold">+{s.avg_max_gain}%</span>
+                                      <span className="text-slate-600 mx-0.5">/</span>
+                                      <span className="text-emerald-400 font-semibold">{s.avg_max_loss}%</span>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[10px] text-slate-500">止盈 / 止损</div>
+                                    <div className="text-[11px]">
+                                      <span className="text-teal-400 font-bold">{s.hit_target_count}</span>
+                                      <span className="text-slate-500 mx-1">/</span>
+                                      <span className="text-rose-400 font-bold">{s.hit_stop_loss_count}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="text-[10px] text-slate-400 italic bg-slate-900/40 p-1.5 rounded border border-slate-800/40">
+                                {s.advice_reason}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {/* Filter & Search Bar */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-800/60">
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                      <span className="text-xs font-semibold text-slate-300">
+                        推选明细清单
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        (共展示 {
+                          (screenerStats.records || []).filter((r: any) => {
+                            if (selectedStrategyFilter !== 'ALL' && r.strategy_id !== selectedStrategyFilter) return false;
+                            if (screenerSearchText.trim()) {
+                              const kw = screenerSearchText.trim().toLowerCase();
+                              return (
+                                (r.symbol || '').toLowerCase().includes(kw) ||
+                                (r.name || '').toLowerCase().includes(kw) ||
+                                (r.core_thesis || '').toLowerCase().includes(kw) ||
+                                (r.strategy_name || '').toLowerCase().includes(kw)
+                              );
+                            }
+                            return true;
+                          }).length
+                        } 只标的)
+                      </span>
+                      {selectedStrategyFilter !== 'ALL' && (
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-medium">
+                          已按战法过滤
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="relative w-full sm:w-64">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={screenerSearchText}
+                        onChange={(e) => setScreenerSearchText(e.target.value)}
+                        placeholder="搜索股票代码、名称或战法..."
+                        className="w-full bg-slate-950/80 border border-slate-800 text-slate-200 text-xs pl-8 pr-3 py-1.5 rounded-xl focus:outline-none focus:border-amber-500 transition-colors"
+                      />
+                      {screenerSearchText && (
+                        <button
+                          type="button"
+                          onClick={() => setScreenerSearchText('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Tracked Records Table */}
+                  <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/50">
+                    <div className="overflow-x-auto max-h-[380px] custom-scrollbar">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900/90 text-slate-400 uppercase border-b border-slate-800 font-medium sticky top-0 z-10 backdrop-blur-sm">
+                          <tr>
+                            <th className="px-4 py-3">标的名称/代码</th>
+                            <th className="px-3 py-3">推选战法 & 梯队</th>
+                            <th className="px-3 py-3">推选日期 / 跟踪天数</th>
+                            <th className="px-3 py-3">推荐价</th>
+                            <th className="px-3 py-3">最新市价</th>
+                            <th className="px-3 py-3">当前累计收益</th>
+                            <th className="px-3 py-3">最高冲高 / 最大回撤</th>
+                            <th className="px-3 py-3">状态</th>
+                            <th className="px-4 py-3">匹配核心战法逻辑</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono">
+                          {(screenerStats.records || [])
+                            .filter((r: any) => {
+                              if (selectedStrategyFilter !== 'ALL' && r.strategy_id !== selectedStrategyFilter) return false;
+                              if (screenerSearchText.trim()) {
+                                const kw = screenerSearchText.trim().toLowerCase();
+                                return (
+                                  (r.symbol || '').toLowerCase().includes(kw) ||
+                                  (r.name || '').toLowerCase().includes(kw) ||
+                                  (r.core_thesis || '').toLowerCase().includes(kw) ||
+                                  (r.strategy_name || '').toLowerCase().includes(kw)
+                                );
+                              }
+                              return true;
+                            })
+                            .map((r: any) => (
+                              <tr key={r.id} className="hover:bg-slate-900/40 transition-colors">
+                                <td className="px-4 py-2.5 font-sans">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      onSelectStock(r.symbol);
+                                      setIsTrackerModalOpen(false);
+                                    }}
+                                    className="text-left font-bold text-indigo-300 hover:text-indigo-200 hover:underline"
+                                  >
+                                    {r.name}
+                                  </button>
+                                  <div className="text-[10px] text-slate-500 font-mono">{r.symbol}</div>
+                                </td>
+                                <td className="px-3 py-2.5 font-sans">
+                                  <div className="font-semibold text-slate-200 text-xs">
+                                    {r.strategy_name || r.clean_thesis || '多因子量化战法'}
+                                  </div>
+                                  <span className={`inline-block mt-0.5 px-1.5 py-0.2 rounded text-[9px] font-semibold border ${
+                                    r.tier_category.includes('短线') ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/40' :
+                                    r.tier_category.includes('中线') ? 'bg-sky-950/80 text-sky-300 border-sky-800/40' :
+                                    'bg-purple-950/80 text-purple-300 border-purple-800/40'
+                                  }`}>
+                                    {r.tier_category}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5 text-slate-400 text-[11px]">
+                                  <div>{r.recommend_date}</div>
+                                  <div className="text-[10px] text-slate-500 font-mono">
+                                    {r.holding_days_tag || '当日'}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5 text-slate-300">¥{Number(r.recommend_price || 0).toFixed(2)}</td>
+                                <td className="px-3 py-2.5 text-slate-100 font-bold">
+                                  ¥{r.latest_price ? Number(r.latest_price).toFixed(2) : '-'}
+                                </td>
+                                <td className="px-3 py-2.5 font-bold">
+                                  <span className={r.current_profit_pct >= 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                                    {r.current_profit_pct > 0 ? '+' : ''}{Number(r.current_profit_pct || 0).toFixed(2)}%
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5 text-[11px]">
+                                  <span className="text-amber-400 font-semibold">+{Number(r.max_profit_pct || 0).toFixed(1)}%</span>
+                                  <span className="text-slate-600 mx-1">/</span>
+                                  <span className="text-emerald-400 font-semibold">{Number(r.max_loss_pct || 0).toFixed(1)}%</span>
+                                </td>
+                                <td className="px-3 py-2.5 font-sans">
+                                  {r.status === 'HIT_TARGET' ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-950 text-teal-300 border border-teal-800">
+                                      🎯 达成止盈
+                                    </span>
+                                  ) : r.status === 'HIT_STOP_LOSS' ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-800">
+                                      🛡️ 纪律止损
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-950 text-sky-300 border border-sky-800">
+                                      📈 跟踪中
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2.5 font-sans text-slate-300 text-[11px] truncate max-w-[200px]" title={r.core_thesis}>
+                                  {r.clean_thesis || r.core_thesis || '多周期量化精选'}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between flex-shrink-0">
+              <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                <span className="text-amber-400 font-bold">💡 策略留存与闭环机制:</span>
+                <span>推选数据永久留存，系统基于【{screenerDays === 0 ? '全部历史长期' : `近 ${screenerDays} 天`}】实盘胜率持续淘汰劣质策略、保留高期望战法。</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setIsTrackerModalOpen(false)}
+                  className="px-4 py-2 bg-slate-800 text-slate-300 text-xs rounded-xl hover:bg-slate-700 transition-colors"
+                >
+                  关闭
+                </button>
+                <button
+                  type="button"
+                  disabled={isEvolutionRunning || !screenerStats || screenerStats.total_count === 0}
+                  onClick={() => {
+                    setIsTrackerModalOpen(false);
+                    handleStartScreenerEvolution();
+                  }}
+                  className="px-5 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-lg shadow-amber-900/30 flex items-center space-x-1.5 transition-all"
+                >
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  <span>立即基于当前战绩自进化策略</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

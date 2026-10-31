@@ -23,6 +23,8 @@ export const StopLossModal: React.FC<StopLossModalProps> = ({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isTesting, setIsTesting] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [selectedConditionIds, setSelectedConditionIds] = useState<number[]>([]);
+  const [isBatchDeleting, setIsBatchDeleting] = useState<boolean>(false);
 
   // Form State for creating new condition
   const [selectedType, setSelectedType] = useState<ConditionType>('STOP_LOSS');
@@ -72,9 +74,29 @@ export const StopLossModal: React.FC<StopLossModalProps> = ({
     try {
       await axios.delete(`/api/v1/stocks/conditions/${id}`);
       fetchConditions();
+      setSelectedConditionIds((prev) => prev.filter((item) => item !== id));
       onConditionsUpdated?.();
     } catch (err) {
       alert('删除条件失败');
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedConditionIds.length === 0) return;
+    if (!confirm(`确定批量删除选中的 ${selectedConditionIds.length} 条监控条件吗？`)) return;
+    setIsBatchDeleting(true);
+    try {
+      const res = await axios.post('/api/v1/stocks/conditions/batch-delete', {
+        ids: selectedConditionIds
+      });
+      alert(res.data?.message || `成功删除 ${selectedConditionIds.length} 条监控条件`);
+      setSelectedConditionIds([]);
+      fetchConditions();
+      onConditionsUpdated?.();
+    } catch (err: any) {
+      alert('批量删除失败: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setIsBatchDeleting(false);
     }
   };
 
@@ -319,12 +341,54 @@ export const StopLossModal: React.FC<StopLossModalProps> = ({
                 </div>
               ) : (
                 <div className="space-y-2.5">
+                  {conditions.length > 0 && (
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs">
+                      <label className="flex items-center space-x-2 text-slate-300 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={conditions.length > 0 && conditions.every((c) => selectedConditionIds.includes(c.id))}
+                          onChange={() => {
+                            if (conditions.every((c) => selectedConditionIds.includes(c.id))) {
+                              setSelectedConditionIds([]);
+                            } else {
+                              setSelectedConditionIds(conditions.map((c) => c.id));
+                            }
+                          }}
+                          className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer"
+                        />
+                        <span>全选 ({conditions.length})</span>
+                      </label>
+
+                      {selectedConditionIds.length > 0 && (
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={handleBatchDelete}
+                            disabled={isBatchDeleting}
+                            className="px-2.5 py-1 bg-red-950 hover:bg-red-900 border border-red-700/60 text-red-200 rounded-lg text-xs font-semibold flex items-center space-x-1 transition-all shadow-sm"
+                          >
+                            <Trash2 className="w-3 h-3 text-red-400" />
+                            <span>批量删除 ({selectedConditionIds.length})</span>
+                          </button>
+                          <button
+                            onClick={() => setSelectedConditionIds([])}
+                            className="text-[11px] text-slate-400 hover:text-slate-200"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {conditions.map((cond) => {
+                    const isSelected = selectedConditionIds.includes(cond.id);
                     return (
                       <div
                         key={cond.id}
                         className={`p-3.5 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                          cond.is_triggered
+                          isSelected
+                            ? 'bg-indigo-950/20 border-indigo-500/80 ring-1 ring-indigo-500/30'
+                            : cond.is_triggered
                             ? 'bg-red-950/20 border-red-800/40'
                             : cond.is_active
                             ? 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
@@ -333,6 +397,16 @@ export const StopLossModal: React.FC<StopLossModalProps> = ({
                       >
                         <div className="space-y-1.5 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => {
+                                setSelectedConditionIds((prev) =>
+                                  prev.includes(cond.id) ? prev.filter((id) => id !== cond.id) : [...prev, cond.id]
+                                );
+                              }}
+                              className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer mr-0.5"
+                            />
                             {getConditionTypeBadge(cond.condition_type)}
                             <span className="font-semibold text-xs text-slate-200">
                               {cond.condition_label || cond.condition_type}

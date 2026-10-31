@@ -173,6 +173,7 @@ export interface PositionConditionItem {
   strategy_note?: string;
   created_at?: string;
   current_price?: number;
+  is_held?: boolean;
 }
 
 export interface AlertNotificationItem {

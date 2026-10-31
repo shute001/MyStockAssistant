@@ -64,6 +64,17 @@ def main():
     else:
         subprocess.Popen(["npm", "run", "dev"], cwd=frontend_dir)
 
+    print("[*] 正在等待后端服务就绪...")
+    import socket
+    backend_ready = False
+    for _ in range(25):
+        try:
+            with socket.create_connection(("127.0.0.1", 8000), timeout=1):
+                backend_ready = True
+                break
+        except (ConnectionRefusedError, OSError):
+            time.sleep(1)
+
     print()
     print("===================================================")
     print(" 服务已成功开启！")
@@ -72,8 +83,8 @@ def main():
     print(" - API 文档: http://127.0.0.1:8000/docs")
     print("===================================================")
 
-    # 3秒后自动打开浏览器
-    time.sleep(3)
+    # 后端就绪后自动打开浏览器
+    time.sleep(1)
     webbrowser.open("http://localhost:5173")
 
 if __name__ == "__main__":
