@@ -557,7 +557,7 @@ def delete_watchlist(w_id: int, db: Session = Depends(get_db)):
 def get_kline(
     symbol: str, 
     response: Response, 
-    days: int = Query(60, ge=10, le=365),
+    days: int = Query(60, ge=10, le=1200),
     period: Optional[str] = Query("day", description="day | week | month")
 ):
     """Get K-line candlestick and technical indicator dataset for chart display with multi-timeframe support"""

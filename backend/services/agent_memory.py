@@ -112,11 +112,28 @@ class AgentMemoryService:
         return results
 
     @classmethod
-    def format_memories_for_prompt(cls, db: Session, target_symbol: Optional[str] = None) -> str:
-        """Format memories into a structured text prompt block with contextual prioritization for ETF vs Stocks"""
+    def format_memories_for_prompt(
+        cls, 
+        db: Session, 
+        target_symbol: Optional[str] = None,
+        context_mode: str = "ALL"  # "ALL" | "SCREENER" | "TRADE_REVIEW"
+    ) -> str:
+        """
+        Format memories into a structured text prompt block with contextual prioritization for ETF vs Stocks.
+        When context_mode == 'SCREENER': filters out personal execution self-blame/habits to avoid
+        poisoning the objective stock screener with subjective past trading flaws.
+        """
         memories = cls.get_all_memories(db, limit=50)
         if not memories:
             return "（暂无历史认知与筛选规则积累。请认真观察用户的交易行为与选股偏好并萃取规则。）"
+
+        # Dual-track decoupling: Screener Agent ONLY absorbs objective Playbooks & Quantitative Gates
+        if context_mode == "SCREENER":
+            memories = [
+                m for m in memories 
+                if m.get("memory_type") in ["MASTER_PLAYBOOK", "SCREENING_RULE", "POSITION_RULE"]
+                and not any(neg in m.get("content", "") for neg in ["我又追高", "手痒", "频繁止损", "心态崩溃", "个人教训"])
+            ]
 
         is_etf = False
         if target_symbol:
@@ -239,21 +256,30 @@ class AgentMemoryService:
                         clean_text = line_str.lstrip("-*0123456789.、 ").strip()
                         if len(clean_text) >= 5:
                             mem_type = "USER_HABIT"
-                            if any(kw in clean_text for kw in ["选股", "筛选", "指标", "金叉", "多头"]):
-                                mem_type = "SCREENING_RULE"
-                            elif any(kw in clean_text for kw in ["建仓", "止损", "仓位", "风控", "平仓"]):
-                                mem_type = "POSITION_RULE"
-                            elif any(kw in clean_text for kw in ["教训", "避免", "错误", "切忌"]):
-                                mem_type = "LESSON_LEARNED"
-                            elif any(kw in clean_text for kw in ["风格", "偏好", "偏爱"]):
-                                mem_type = "TRADING_STYLE"
+                            is_from_personal_review = "交易" in source_label or "实盘" in source_label
+                            if is_from_personal_review:
+                                # Personal trading review strictly records personal execution discipline/habits
+                                mem_type = "LESSON_LEARNED" if any(kw in clean_text for kw in ["教训", "避免", "错误", "切忌", "止损", "手痒", "追高"]) else "USER_HABIT"
+                                mem_cat = "GENERAL"
+                            else:
+                                # Objective Screener evolution extracts quantitative screening rules & playbooks
+                                if any(kw in clean_text for kw in ["突破", "vcp", "推土机", "网格", "低吸", "战法"]):
+                                    mem_type = "MASTER_PLAYBOOK"
+                                elif any(kw in clean_text for kw in ["选股", "筛选", "指标", "金叉", "多头"]):
+                                    mem_type = "SCREENING_RULE"
+                                elif any(kw in clean_text for kw in ["建仓", "止损", "仓位", "风控", "平仓"]):
+                                    mem_type = "POSITION_RULE"
+                                else:
+                                    mem_type = "SCREENING_RULE"
+                                mem_cat = cls.infer_category(clean_text, mem_type)
 
                             cls.add_memory(
                                 db=db,
                                 content=clean_text,
                                 memory_type=mem_type,
                                 importance=4,
-                                source_info=source_label
+                                source_info=source_label,
+                                category=mem_cat
                             )
                             extracted_count += 1
 

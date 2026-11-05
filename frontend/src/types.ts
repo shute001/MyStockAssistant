@@ -209,4 +209,112 @@ export interface AIConditionProposal {
   conditions: SuggestedCondition[];
 }
 
+export interface BacktestStrategyItem {
+  id: string;
+  name: string;
+  tier: string;
+  description: string;
+  default_params: Record<string, any>;
+}
 
+export interface BacktestPoolItem {
+  id: string;
+  name: string;
+}
+
+export interface BacktestTradeItem {
+  trade_id: number;
+  symbol: string;
+  name: string;
+  buy_date: string;
+  buy_price: number;
+  entry_signal?: string;
+  sell_date: string;
+  sell_price: number;
+  shares: number;
+  holding_days: number;
+  net_profit: number;
+  return_pct: number;
+  exit_reason: string;
+  total_fee: number;
+}
+
+export interface BacktestEquityPoint {
+  date: string;
+  equity: number;
+  cash: number;
+  position_count: number;
+  benchmark: number;
+  drawdown_pct: number;
+}
+
+export interface BacktestResult {
+  status: string;
+  message?: string;
+  strategy_id: string;
+  strategy_name: string;
+  strategy_tier: string;
+  strategy_description: string;
+  target_desc: string;
+  test_days: number;
+  start_date?: string;
+  end_date?: string;
+  date_range_desc?: string;
+  initial_capital: number;
+  final_equity: number;
+  total_return_pct: number;
+  annualized_return_pct: number;
+  benchmark_return_pct: number;
+  alpha_pct: number;
+  win_rate: number;
+  profit_loss_ratio: number;
+  avg_win_pct: number;
+  avg_loss_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  sortino_ratio?: number;
+  profit_factor?: number;
+  annual_volatility?: number;
+  beta?: number;
+  calmar_ratio: number;
+  total_trades: number;
+  winning_trades_count: number;
+  losing_trades_count: number;
+  avg_holding_days: number;
+  max_consecutive_losses: number;
+  total_friction_fees: number;
+  assessment_summary: string;
+  equity_curve: BacktestEquityPoint[];
+  trades: BacktestTradeItem[];
+  monthly_matrix?: Record<string, Record<string, number>>;
+  pnl_distribution?: Array<{ label: string; min: number; max: number; count: number }>;
+  symbols_with_trades?: Array<{
+    symbol: string;
+    name: string;
+    trades_count: number;
+    win_count: number;
+    total_profit: number;
+  }>;
+}
+
+
+
+
+export interface AIOptimizeResult {
+  status: string;
+  source?: string;
+  diagnosis_summary: string;
+  key_flaws: string[];
+  recommended_params: {
+    hard_stop_loss_pct: number;
+    target_profit_pct: number;
+    max_positions: number;
+  };
+  rationale: string;
+  expected_impact: {
+    win_rate: string;
+    profit_loss_ratio: string;
+    max_drawdown: string;
+  };
+  market_regime_advice: string;
+}

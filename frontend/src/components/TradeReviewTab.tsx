@@ -6,10 +6,11 @@ import {
   Plus, Upload, Trash2, Clipboard, FileText, Check, Cpu, Sparkles, 
   Brain, ShieldAlert, TrendingUp, TrendingDown, RefreshCw, Layers, Calendar, MessageSquare,
   Search, Filter, X, Edit3, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  Send, Bot, User, CornerDownLeft, Award, Zap, BookOpen, Maximize2, Minimize2
+  Send, Bot, User, CornerDownLeft, Award, Zap, BookOpen, Maximize2, Minimize2, Scale
 } from 'lucide-react';
 import { TradeRecordItem, AgentMemoryItem, MasterPlaybookItem, StrategyCategory } from '../types';
 import { AIConditionCard } from './AIConditionCard';
+import { BacktestModal } from './BacktestModal';
 
 const CATEGORY_MAP: Record<StrategyCategory, { label: string; badgeClass: string; icon: string }> = {
   SHORT_TERM: { label: '股票短线', badgeClass: 'bg-rose-950/80 text-rose-300 border-rose-800/40', icon: '⚡' },
@@ -257,6 +258,7 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
   const [isScreenerRunning, setIsScreenerRunning] = useState(false);
   const [isEvolutionRunning, setIsEvolutionRunning] = useState(false);
   const [isTrackerModalOpen, setIsTrackerModalOpen] = useState(false);
+  const [isBacktestModalOpen, setIsBacktestModalOpen] = useState(false);
   const [screenerStats, setScreenerStats] = useState<any>(null);
   const [isLoadingScreenerStats, setIsLoadingScreenerStats] = useState(false);
   const [screenerDays, setScreenerDays] = useState<number>(0);
@@ -942,6 +944,16 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
               >
                 <TrendingUp className={`w-3.5 h-3.5 ${isEvolutionRunning ? 'animate-spin' : ''}`} />
                 <span>{isEvolutionRunning ? '自进化分析中...' : '🔄 胜率复盘与自进化'}</span>
+              </button>
+
+              {/* 🎯 策略量化回测与严谨验证 Button */}
+              <button
+                onClick={() => setIsBacktestModalOpen(true)}
+                className="px-3 py-2 bg-gradient-to-r from-indigo-600/90 to-purple-600/90 hover:from-indigo-500 hover:to-purple-500 text-white border border-indigo-400/30 text-xs font-bold rounded-xl shadow-md shadow-indigo-950/40 transition-all flex items-center space-x-1.5 cursor-pointer"
+                title="开启无未来函数、计入真实印花税/双边佣金/滑点的严格策略历史回测"
+              >
+                <Scale className="w-3.5 h-3.5 text-indigo-200" />
+                <span>🎯 策略量化回测</span>
               </button>
 
               {/* 📊 推选战绩看板 Button */}
@@ -2440,6 +2452,20 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
             <div className="px-5 py-2.5 bg-slate-950/40 border-b border-slate-800/80 flex items-center gap-2.5 overflow-x-auto text-xs flex-shrink-0">
               <span className="text-slate-400 font-medium flex-shrink-0">💡 快捷问诊:</span>
               <button
+                onClick={() => handleSendChatMessage('全面分析我本地创建的自选板块股票池（包括准备建仓、ETF实仓、AI长线/ETF等），评估各板块整体热度与建仓买点机会')}
+                disabled={isChatStreaming}
+                className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-full flex-shrink-0 font-semibold transition-colors flex items-center gap-1"
+              >
+                📁 分析我的自选板块股票池
+              </button>
+              <button
+                onClick={() => handleSendChatMessage('重点分析我的【准备建仓】板块里的股票，哪些已经回踩企稳符合买入标准？')}
+                disabled={isChatStreaming}
+                className="px-3 py-1 bg-teal-950/70 hover:bg-teal-900 text-teal-300 border border-teal-800/40 rounded-full flex-shrink-0 transition-colors"
+              >
+                🎯 研判【准备建仓】买点
+              </button>
+              <button
                 onClick={() => handleSendChatMessage('分析 600519 (贵州茅台) 过去一年年线位置、近10日K线形态、量比及 MACD/KDJ/RSI/BOLL 买卖点')}
                 disabled={isChatStreaming}
                 className="px-3 py-1 bg-amber-950/60 hover:bg-amber-900 text-amber-300 border border-amber-800/40 rounded-full flex-shrink-0 transition-colors"
@@ -3205,6 +3231,14 @@ export const TradeReviewTab: React.FC<TradeReviewTabProps> = ({ onSelectStock, o
             )}
           </div>
         </div>
+      )}
+
+      {/* 🎯 Quantitative Strategy Backtesting Modal */}
+      {isBacktestModalOpen && (
+        <BacktestModal 
+          isOpen={isBacktestModalOpen}
+          onClose={() => setIsBacktestModalOpen(false)}
+        />
       )}
 
       {/* 🏆 Screener Performance Tracker Modal */}

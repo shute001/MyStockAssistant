@@ -498,6 +498,23 @@ class MarketDataService:
         df["kdj_d"] = [round(x, 2) for x in d]
         df["kdj_j"] = [round(3 * kv - 2 * dv, 2) for kv, dv in zip(k, d)]
 
+        # 3.1 Mid-Term Swing KDJ (21, 3, 3) - Robust monthly/mid-term wave filter
+        low_min_21 = df["low"].rolling(21).min()
+        high_max_21 = df["high"].rolling(21).max()
+        rsv_21 = (df["close"] - low_min_21) / (high_max_21 - low_min_21 + 1e-8) * 100
+        k21 = [50.0]
+        d21 = [50.0]
+        for val in rsv_21.iloc[1:]:
+            if np.isnan(val):
+                val = 50.0
+            k_val = (2/3) * k21[-1] + (1/3) * val
+            d_val = (2/3) * d21[-1] + (1/3) * k_val
+            k21.append(k_val)
+            d21.append(d_val)
+        df["kdj21_k"] = [round(x, 2) for x in k21]
+        df["kdj21_d"] = [round(x, 2) for x in d21]
+        df["kdj21_j"] = [round(3 * kv - 2 * dv, 2) for kv, dv in zip(k21, d21)]
+
         # 4. RSI (6, 12, 24) - Wilder's Smoothing (Standard in TongDaXin / TongHuaShun / TradingView)
         delta = df["close"].diff()
         gain = delta.where(delta > 0, 0.0)
@@ -814,8 +831,8 @@ class MarketDataService:
                         df_daily = cls._calculate_indicators(df_daily)
                     else:
                         logger.info(
-                            f"Local K-lines for {symbol} are stale/missing turnover/divergent "
-                            f"(latest: {latest_record_date}, expected: {expected_trade_date}, divergent: {price_divergent}), refreshing from remote..."
+                            f"Local K-lines for {symbol} may need refresh "
+                            f"(latest: {latest_record_date}, expected: {expected_trade_date}, divergent: {price_divergent}). Attempting remote fetch..."
                         )
             except Exception as e:
                 logger.warning(f"Failed to read kline from DB for {symbol}: {e}")
@@ -828,9 +845,32 @@ class MarketDataService:
 
         # 2. Fetch remote and sync to DB if local DB is empty or stale
         if df_daily.empty:
-            df_daily = cls._fetch_remote_kline(symbol, days=max(days, 365))
-            if db is not None and not df_daily.empty:
-                cls.sync_stock_klines_to_db(db, symbol, days=365)
+            df_remote = cls._fetch_remote_kline(symbol, days=max(days, 365))
+            is_mock_remote = getattr(df_remote, "attrs", {}).get("is_mock", False)
+
+            # CRITICAL: If remote fetch failed or returned synthetic mock data, BUT local DB has real records,
+            # NEVER discard real DB records in favor of synthetic mock numbers!
+            if (df_remote.empty or is_mock_remote) and 'db_records' in locals() and len(db_records) >= 20:
+                logger.info(f"Remote fetch unavailable or mock for {symbol}; preserving {len(db_records)} authentic DB records.")
+                records = []
+                for r in db_records:
+                    records.append({
+                        "date": r.date, "symbol": r.symbol, "open": r.open, "close": r.close,
+                        "high": r.high, "low": r.low, "volume": r.volume, "amount": r.amount,
+                        "pct_chg": r.pct_chg, "turnover": r.turnover, "ma5": r.ma5, "ma10": r.ma10,
+                        "ma20": r.ma20, "ma60": r.ma60, "ma120": r.ma120, "ma250": r.ma250,
+                        "macd_dif": r.macd_dif, "macd_dea": r.macd_dea, "macd_hist": r.macd_hist,
+                        "kdj_k": r.kdj_k, "kdj_d": r.kdj_d, "kdj_j": r.kdj_j,
+                        "rsi6": r.rsi6, "rsi12": r.rsi12, "rsi24": r.rsi24,
+                        "boll_up": r.boll_up, "boll_mid": r.boll_mid, "boll_down": r.boll_down,
+                        "vol_ratio": r.vol_ratio
+                    })
+                df_daily = pd.DataFrame(records)
+                df_daily = cls._calculate_indicators(df_daily)
+            else:
+                df_daily = df_remote
+                if db is not None and not df_daily.empty and not is_mock_remote:
+                    cls.sync_stock_klines_to_db(db, symbol, days=365)
 
         if df_daily.empty:
             return pd.DataFrame()
@@ -968,6 +1008,20 @@ class MarketDataService:
             kdj_status = "KDJ低位金叉成型"
         else:
             kdj_status = "KDJ中位常态运行"
+
+        # Mid-Term Swing KDJ (21, 3, 3) Status & User Setup
+        kdj21_k = round(float(latest.get("kdj21_k") or 50.0), 2)
+        kdj21_d = round(float(latest.get("kdj21_d") or 50.0), 2)
+        kdj21_j = round(float(latest.get("kdj21_j") or 50.0), 2)
+        prev_kdj21_k = float(prev.get("kdj21_k", 50.0))
+        prev_kdj21_d = float(prev.get("kdj21_d", 50.0))
+
+        # Check KDJ(21) Golden Cross in low region (<50 or <=52)
+        kdj21_cross_below_50 = bool(
+            (kdj21_k >= kdj21_d) and 
+            (kdj21_k <= 55.0 or kdj21_d <= 50.0) and
+            (prev_kdj21_k <= prev_kdj21_d or (kdj21_k - kdj21_d <= 8.0))
+        )
 
         # RSI Status
         rsi6 = round(float(latest.get("rsi6") or 50.0), 2)
@@ -1146,12 +1200,25 @@ class MarketDataService:
                     "pct_chg": f"{float(r.get('pct_chg', 0.0)):+.2f}%"
                 })
 
+            # Calculate consecutive weeks closing above weekly MA5
+            weeks_above_ma5_count = 0
+            for r in reversed(df_weekly.to_dict('records')):
+                c_val = float(r.get("close") or 0.0)
+                ma5_val = float(r.get("ma5") or 0.0)
+                if ma5_val > 0 and c_val >= ma5_val:
+                    weeks_above_ma5_count += 1
+                else:
+                    break
+
             weekly_context = {
                 "weekly_close": w_close,
                 "weekly_ma5": w_ma5,
                 "weekly_ma10": w_ma10,
                 "weekly_ma20_lifeline": w_ma20,
                 "above_weekly_ma20": w_above_ma20,
+                "consecutive_weeks_above_ma5": weeks_above_ma5_count,
+                "defense_weekly_ma5": w_ma5,
+                "defense_weekly_ma10": w_ma10,
                 "weekly_trend": w_trend,
                 "weekly_macd_dif": w_macd_dif,
                 "weekly_macd_dea": w_macd_dea,
@@ -1217,6 +1284,22 @@ class MarketDataService:
             "kdj_d": kdj_d,
             "kdj_j": kdj_j,
             "kdj_status": kdj_status,
+            # Mid-Term KDJ(21, 3, 3) & Weekly MA5 Setup
+            "kdj21_k": kdj21_k,
+            "kdj21_d": kdj21_d,
+            "kdj21_j": kdj21_j,
+            "kdj21_weekly_swing_setup": {
+                "is_matched": bool(kdj21_cross_below_50 and weekly_context.get("consecutive_weeks_above_ma5", 0) >= 2),
+                "kdj21_cross_below_50": kdj21_cross_below_50,
+                "weeks_above_weekly_ma5": weekly_context.get("consecutive_weeks_above_ma5", 0),
+                "defense_weekly_ma5": weekly_context.get("weekly_ma5", 0.0),
+                "defense_weekly_ma10": weekly_context.get("weekly_ma10", 0.0),
+                "summary": (
+                    f"🎯 触发【周线MA5+KDJ(21)低位金叉波段战法】(KDJ21金叉于{kdj21_k}<=50，连续{weekly_context.get('consecutive_weeks_above_ma5', 0)}周收于5周线¥{weekly_context.get('weekly_ma5', 0.0)}上方，破5周/10周均线波段止盈止损)"
+                    if (kdj21_cross_below_50 and weekly_context.get("consecutive_weeks_above_ma5", 0) >= 2)
+                    else f"KDJ(21)K:{kdj21_k}/D:{kdj21_d}，连站5周线{weekly_context.get('consecutive_weeks_above_ma5', 0)}周"
+                )
+            },
             "rsi6": rsi6,
             "rsi12": rsi12,
             "rsi24": rsi24,
